@@ -3,9 +3,18 @@ import path from "node:path";
 
 import { NextRequest, NextResponse } from "next/server";
 
-
 function repoRoot(): string {
   return path.resolve(process.cwd(), "..");
+}
+
+function useCliTranspiler(): boolean {
+  if (process.env.SCAPE_TABLEAU_USE_CLI === "1") {
+    return true;
+  }
+  if (process.env.SCAPE_TABLEAU_USE_CLI === "0") {
+    return false;
+  }
+  return !process.env.VERCEL;
 }
 
 function runCli(payload: Buffer): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -35,6 +44,23 @@ function runCli(payload: Buffer): Promise<{ code: number; stdout: string; stderr
   });
 }
 
+async function runPythonEngine(request: NextRequest, form: FormData): Promise<Response> {
+  const engineUrl = new URL("/api/engine", request.url);
+  const forwarded = await fetch(engineUrl, {
+    method: "POST",
+    body: form,
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+  const text = await forwarded.text();
+  return new NextResponse(text, {
+    status: forwarded.status,
+    headers: { "Content-Type": forwarded.headers.get("Content-Type") ?? "application/json" },
+  });
+}
+
 export async function POST(request: NextRequest) {
   const form = await request.formData();
   const file = form.get("file");
@@ -49,6 +75,12 @@ export async function POST(request: NextRequest) {
   const payload = Buffer.from(await file.arrayBuffer());
   if (payload.length === 0) {
     return NextResponse.json({ error: "File is empty." }, { status: 400 });
+  }
+
+  if (!useCliTranspiler()) {
+    const retry = new FormData();
+    retry.set("file", new File([payload], file.name, { type: file.type || "application/octet-stream" }));
+    return runPythonEngine(request, retry);
   }
 
   let ran: { code: number; stdout: string; stderr: string };

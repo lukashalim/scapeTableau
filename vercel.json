@@ -1,0 +1,14 @@
+{
+  "framework": "nextjs",
+  "installCommand": "pip install -r requirements.txt && npm install --prefix web",
+  "buildCommand": "npm run build --prefix web",
+  "outputDirectory": "web/.next",
+  "rewrites": [
+    { "source": "/api/engine", "destination": "/api/engine.py" }
+  ],
+  "functions": {
+    "api/engine.py": {
+      "includeFiles": "engine/**"
+    }
+  }
+}

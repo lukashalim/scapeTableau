@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from pathlib import Path
 
@@ -83,7 +84,14 @@ def test_sample_workbook_round_trip() -> None:
 
     zn = next(f for f in result.calculated_fields if f.caption == "Profit or Zero")
     assert zn.sql == 'COALESCE("Profit", 0)'
+    assert zn.raw_formula == zn.formula
+    assert zn.sql_expression == zn.sql
     assert zn.status == ParseStatus.ok
+    dumped = json.loads(result.model_dump_json())
+    first = dumped["calculated_fields"][0]
+    assert "formula" in first and "sql" in first
+    assert "raw_formula" not in first
+    assert "sql_expression" not in first
 
     contains = next(f for f in result.calculated_fields if f.caption == "Has Table")
     assert contains.sql == "\"Product Name\" LIKE '%Table%'"
@@ -124,6 +132,19 @@ def test_invalid_xml_raises() -> None:
 def test_invalid_zip_raises() -> None:
     with pytest.raises(WorkbookParseError, match="Invalid"):
         transpile(b"PK\x03\x04not-a-real-zip")
+
+
+def test_vercel_fn_json_keys_match_api() -> None:
+    from engine.vercel_fn import transpile_payload
+
+    status, payload = transpile_payload("superstore_calcs.twb", SAMPLE.read_bytes())
+    assert status == 200
+    body = json.loads(payload.decode("utf-8"))
+    field = body["calculated_fields"][0]
+    assert "formula" in field
+    assert "sql" in field
+    assert "raw_formula" not in field
+    assert "sql_expression" not in field
 
 
 def test_cli_json_stdin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

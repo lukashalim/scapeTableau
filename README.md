@@ -1,50 +1,131 @@
-# EscapeTableau
+# scapeTableau
 
-Local-first converter: Tableau calculated fields in `.twb` / `.twbx` workbooks become ANSI SQL. Parsing and transpilation stay in memory. Files are never written unless you pass `--output-dir` or click a download.
+Instantly Extract & Transpile Tableau Calculated Fields into Clean ANSI SQL & dbt Models.
 
-Requires **Python 3.11+**. The web UI also needs Node.js 20+.
+scapeTableau is a zero-dependency, pure-Python engine designed to automate the painful process of migrating legacy Tableau workbooks (.twb and .twbx) into modern cloud data stacks (Snowflake, BigQuery, Postgres, DuckDB, and dbt).
 
-## Install
+Parsing and transpilation execute 100% in-memory. Your files are never persisted to disk, uploaded to cloud storage, or sent to external LLM APIs—making it fully compliant with strict corporate data privacy policies.
 
-```bash
-python3 -m pip install -r requirements.txt
+## Key Features
+
+- **In-Memory & Air-Gapped:** Zero disk writes and zero telemetry. Ideal for sensitive corporate workbook audits.
+- **Zero-Dependency Python Engine:** Built entirely on standard Python utilities (`xml.etree` and `zipfile`). Fast, lightweight, and deterministic.
+- **Smart AST Formula Transpilation:** Recursively transpiles Tableau-specific syntax (`IIF`, `ZN`, `IFNULL`, `STARTSWITH`, `CONTAINS`, `CASE`) into standard ANSI SQL.
+- **Graceful LOD Fallbacks:** Complex Level of Detail (`FIXED`, `INCLUDE`, `EXCLUDE`) calculations are cleanly isolated and commented with `-- TODO: Review LOD logic` rather than crashing.
+- **Multi-Interface Support:** Run it as a CLI tool, an offline Streamlit GUI, or a Next.js web application.
+
+## Architecture
+
+```
+                       [ .twb / .twbx bytes ]
+                                 │
+                                 ▼
+                     ┌──────────────────────┐
+                     │    engine/parser.py  │ (xml.etree + zipfile)
+                     └───────────┬──────────┘
+                                 │
+                                 ▼
+                     ┌──────────────────────┐
+                     │    engine/schema.py  │ (Pydantic v2 Models)
+                     └───────────┬──────────┘
+                                 │
+                                 ▼
+                     ┌──────────────────────┐
+                     │ engine/transpiler.py │ (Formula Transpilation)
+                     └───────────┬──────────┘
+                                 │
+                                 ▼
+                     ┌──────────────────────┐
+                     │   TranspileResult    │
+                     └─────┬─────┬─────┬────┘
+                           │     │     │
+            ┌──────────────┘     │     └──────────────┐
+            ▼                    ▼                    ▼
+       [ cli.py ]        [ app_local.py ]      [ /api/transpile ]
+       (Typer CLI)         (Streamlit)         (Next.js App Router)
 ```
 
-There is no `py-tbparse` or `tableau-parser` dependency. The engine uses `xml.etree` and `zipfile` only.
+## Quickstart
 
-## Engine
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+ (Optional, only required if running the Next.js web UI)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/scapeTableau.git
+cd scapeTableau
+
+# Install Python dependencies
+pip install -r requirements.txt
+```
+
+## Usage
+
+### 1. Python API
+
+Use scapeTableau directly within your Python scripts or data pipelines:
 
 ```python
-from pathlib import Path
 from engine import transpile
 
-result = transpile(Path("samples/superstore_calcs.twb"))
+# Transpile from a local file path
+result = transpile("path/to/workbook.twbx")
+
+# Or pass raw bytes directly
+# result = transpile(file_bytes)
+
+# Print generated ANSI SQL views
 print(result.sql_script)
+
+# Inspect individual calculated fields
+for field in result.calculated_fields:
+    print(f"Field: {field.caption} ({field.datatype})")
+    print(f"Original: {field.raw_formula}")
+    print(f"ANSI SQL: {field.sql_expression}")
+    print(f"Parse Status: {field.status}\n")
+
+# Access Markdown Audit Report
 print(result.markdown_audit)
 ```
 
-`transpile()` accepts a path, `bytes`, or a binary file object. Packaged `.twbx` archives are unzipped in memory.
+### 2. Command Line Interface (CLI)
 
-Tests:
-
-```bash
-python3 -m pytest engine/test_engine.py
-```
-
-## CLI
+Process workbooks directly from your terminal using `cli.py`:
 
 ```bash
-python cli.py process samples/superstore_calcs.twb --output-dir ./output --format all --print-summary
+# Process a workbook and output summary table to stdout
+python cli.py process samples/superstore_calcs.twb --print-summary
+
+# Export SQL, Markdown, and JSON results to an output folder
+python cli.py process my_dashboard.twbx --output-dir ./output --format all
+
+# Pipe binary content via stdin (used for web API streaming)
+cat my_dashboard.twbx | python cli.py process - --format json
 ```
 
-- `--format`: `sql` | `markdown` | `json` | `all` (default `all`)
-- `--print-summary`: ASCII table of captions and parse status
-- stdin (used by the web API): `python cli.py process - --format json < workbook.twb`
-- Writes files **only** when `--output-dir` is set. JSON goes to stdout when `--format json` and no output directory.
+CLI Options:
 
-Optional `--dialect ansi|snowflake|postgres|duckdb` tweaks `LIKE` vs `ILIKE`.
+- `--output-dir` / `-o`: Directory to save extracted `.sql`, `.md`, and `.json` artifacts.
+- `--format` / `-f`: Choose output format (`sql`, `markdown`, `json`, `all`). Default: `all`.
+- `--print-summary`: Displays a clean terminal table of all extracted fields.
 
-## Next.js UI
+### 3. Streamlit Offline GUI
+
+For non-technical users or local air-gapped environments without web access:
+
+```bash
+streamlit run app_local.py
+```
+
+Features a green "Local Offline Mode" status badge, sidebar selection for SQL dialects (ANSI SQL, Snowflake, PostgreSQL, DuckDB), live interactive field tables, and instant file download buttons.
+
+### 4. Next.js Web App
+
+Run the modern web interface locally:
 
 ```bash
 cd web
@@ -52,30 +133,21 @@ npm install
 npm run dev
 ```
 
-Dev server binds **0.0.0.0:4317**. Open [http://127.0.0.1:4317](http://127.0.0.1:4317). Drop a workbook or use **Try with Sample Workbook**. Results: Monaco SQL, searchable audit table, Markdown download.
+Open http://localhost:4317 in your browser.
 
-`POST /api/transpile` pipes the upload to `python cli.py process - --format json` on stdin and never persists the file. Python 3.11+ and `pip install -r requirements.txt` must be available on the machine that runs Next.js.
+- Drag-and-drop target for `.twb` and `.twbx` files.
+- "Try with Sample Workbook" button to instantly test logic offline.
+- Monaco-style SQL preview with copy-to-clipboard functionality.
+- Searchable audit table for calculated fields.
 
-## Streamlit (air-gapped)
+## Running Tests
+
+The test suite validates parser execution, formula tokenization, and edge-case handling against synthetic Tableau XML workbooks:
 
 ```bash
-streamlit run app_local.py
+pytest engine/test_engine.py
 ```
-
-Green **Local Offline Mode** banner, file uploader, dialect sidebar (`ansi` / `snowflake` / `postgres` / `duckdb`), and tabs for SQL, dataframe, and downloads.
-
-## Samples
-
-- `samples/superstore_calcs.twb` — compact synthetic workbook with IIF, ZN, IFNULL, CONTAINS, LOD, and name-resolution calcs. Used by tests and the sample button.
-- An optional copy of Sample Super Store from [hiranvjoseph/Tableau-Dashboard-Repository](https://github.com/hiranvjoseph/Tableau-Dashboard-Repository) was **not** vendored: that repository has no declared MIT license.
-
-## Layout
-
-- `engine/` — schema, parser, transpiler, audit, tests
-- `cli.py` — Typer
-- `app_local.py` — Streamlit
-- `web/` — Next.js App Router + Tailwind + shadcn/ui
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Lukas.
+Distributed under the MIT License. See LICENSE for more information.

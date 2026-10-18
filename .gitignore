@@ -8,6 +8,7 @@ output/
 .DS_Store
 node_modules/
 web/.next/
+web/bundled-engine/
 web/out/
 web/.turbo/
 .next/

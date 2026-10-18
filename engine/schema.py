@@ -57,6 +57,16 @@ class CalculatedField(BaseModel):
     datasource: str
     error: str | None = None
 
+    @property
+    def raw_formula(self) -> str:
+        """Tableau formula text; JSON continues to serialize as ``formula``."""
+        return self.formula
+
+    @property
+    def sql_expression(self) -> str:
+        """Transpiled SQL; JSON continues to serialize as ``sql``."""
+        return self.sql
+
 
 class TranspileResult(BaseModel):
     calculated_fields: list[CalculatedField] = Field(default_factory=list)

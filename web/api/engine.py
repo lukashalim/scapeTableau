@@ -6,7 +6,12 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-for candidate in (HERE.parents[2], HERE.parents[1], HERE.parents[1] / "bundled-engine"):
+web_root = HERE.parents[1]
+for candidate in (
+    web_root / "bundled-engine",
+    HERE.parents[2],
+    web_root,
+):
     if (candidate / "engine" / "__init__.py").exists():
         path = str(candidate)
         if path not in sys.path:

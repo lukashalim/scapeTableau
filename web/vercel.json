@@ -1,7 +1,1 @@
-{
-  "functions": {
-    "api/engine.py": {
-      "includeFiles": "{../engine/**,engine/**}"
-    }
-  }
-}
+{}

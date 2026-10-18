@@ -45,7 +45,8 @@ function runCli(payload: Buffer): Promise<{ code: number; stdout: string; stderr
 }
 
 async function runPythonEngine(request: NextRequest, form: FormData): Promise<Response> {
-  const engineUrl = new URL("/api/engine", request.url);
+  const configured = process.env.TRANSPILER_URL?.trim();
+  const engineUrl = configured ? new URL(configured) : new URL("/api/engine", request.url);
   const forwarded = await fetch(engineUrl, {
     method: "POST",
     body: form,

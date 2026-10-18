@@ -1,12 +1,1 @@
-{
-  "functions": {
-    "api/transpile.py": {
-      "runtime": "python3.12",
-      "includeFiles": "bundled-engine/**"
-    },
-    "api/engine.py": {
-      "runtime": "python3.12",
-      "includeFiles": "bundled-engine/**"
-    }
-  }
-}
+{}

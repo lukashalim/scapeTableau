@@ -75,3 +75,7 @@ Green **Local Offline Mode** banner, file uploader, dialect sidebar (`ansi` / `s
 - `cli.py` — Typer
 - `app_local.py` — Streamlit
 - `web/` — Next.js App Router + Tailwind + shadcn/ui
+
+## License
+
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Lukas.

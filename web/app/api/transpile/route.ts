@@ -3,8 +3,6 @@ import path from "node:path";
 
 import { NextRequest, NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const maxDuration = 60;
 
 function repoRoot(): string {
   return path.resolve(process.cwd(), "..");

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+output/
+*.egg-info/
+.DS_Store
+node_modules/
+web/.next/
+web/out/
+web/.turbo/
+.next/
+dist/
+.coverage
+htmlcov/

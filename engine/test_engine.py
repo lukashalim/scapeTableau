@@ -134,6 +134,42 @@ def test_invalid_zip_raises() -> None:
         transpile(b"PK\x03\x04not-a-real-zip")
 
 
+def test_asgi_app_post_transpile() -> None:
+    import asyncio
+
+    from app import app as asgi_app
+
+    payload = SAMPLE.read_bytes()
+    boundary = "----scapeBoundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="superstore_calcs.twb"\r\n'
+        "Content-Type: application/xml\r\n\r\n"
+    ).encode("utf-8") + payload + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    messages = [{"type": "http.request", "body": body, "more_body": False}]
+
+    async def receive() -> dict:
+        return messages.pop(0)
+
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/transpile",
+        "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+    }
+    asyncio.run(asgi_app(scope, receive, send))
+    assert sent[0]["status"] == 200
+    data = json.loads(sent[1]["body"].decode("utf-8"))
+    assert len(data["calculated_fields"]) >= 1
+    assert "formula" in data["calculated_fields"][0]
+
+
 def test_vercel_fn_json_keys_match_api() -> None:
     from engine.vercel_fn import transpile_payload
 

@@ -32,9 +32,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="flex min-h-full flex-col font-sans">
         <ThemeProvider>
-          <div className="flex items-center justify-end px-4 pt-4 md:px-8">
+          <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b bg-background/90 px-4 py-3 backdrop-blur md:px-8">
+            <p className="font-medium tracking-tight">EscapeTableau</p>
             <ThemeToggle />
-          </div>
+          </header>
           {children}
           <Toaster />
         </ThemeProvider>

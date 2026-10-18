@@ -20,7 +20,7 @@ import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -155,10 +155,6 @@ export function WorkbookConverter() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 md:py-16">
       <header className="flex flex-col gap-6">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <FileCode2 className="size-4" />
-          EscapeTableau
-        </div>
         <div className="max-w-3xl space-y-4">
           <h1 className="font-heading text-4xl font-semibold tracking-tight md:text-5xl">
             Tableau formulas to ANSI SQL
@@ -187,9 +183,8 @@ export function WorkbookConverter() {
           <CardDescription>Accepts Tableau Desktop workbooks. Try the synthetic Superstore sample offline.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
+          <label
+            htmlFor="workbook-file"
             onDragOver={(event) => {
               event.preventDefault();
               setDragOver(true);
@@ -201,7 +196,7 @@ export function WorkbookConverter() {
               onFiles(event.dataTransfer.files);
             }}
             className={cn(
-              "flex w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center transition-colors",
+              "flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center transition-colors",
               dragOver ? "border-primary bg-muted/60" : "border-border hover:bg-muted/40",
             )}
           >
@@ -214,22 +209,28 @@ export function WorkbookConverter() {
               <p className="font-medium">Drop a .twb or .twbx here</p>
               <p className="text-sm text-muted-foreground">or click to browse. Files are not persisted.</p>
             </div>
-          </button>
+          </label>
           <input
             ref={inputRef}
+            id="workbook-file"
             type="file"
             accept=".twb,.twbx,application/xml,application/zip"
-            className="hidden"
+            className="sr-only"
             onChange={(event) => {
               onFiles(event.target.files);
               event.target.value = "";
             }}
           />
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <Button onClick={() => void trySample()} disabled={state === "loading"}>
+            <button
+              type="button"
+              className={buttonVariants()}
+              disabled={state === "loading"}
+              onClick={() => void trySample()}
+            >
               <Sparkles data-icon="inline-start" />
               Try with Sample Workbook
-            </Button>
+            </button>
             {fileName ? (
               <p className="text-sm text-muted-foreground">
                 Last file: <span className="text-foreground">{fileName}</span>

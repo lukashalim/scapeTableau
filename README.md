@@ -56,7 +56,7 @@ Parsing and transpilation execute 100% in-memory. Your files are never persisted
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/scapeTableau.git
+git clone https://github.com/lukashalim/scapeTableau.git
 cd scapeTableau
 
 # Install Python dependencies

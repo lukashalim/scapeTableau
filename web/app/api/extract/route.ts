@@ -41,7 +41,7 @@ function runCliExtract(payload: Buffer): Promise<{ code: number; stdout: Buffer;
   const cli = path.join(repoRoot(), "cli.py");
 
   return new Promise((resolve, reject) => {
-    const child = spawn(python, [cli, "extract", "-"], {
+    const child = spawn(/* turbopackIgnore: true */ python, [cli, "extract", "-"], {
       cwd: repoRoot(),
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -70,7 +70,7 @@ async function runPythonEngine(request: NextRequest, form: FormData): Promise<Re
     body: form,
     cache: "no-store",
   });
-  const buf = Buffer.from(await forwarded.arrayBuffer());
+  const buf = new Uint8Array(await forwarded.arrayBuffer());
   const contentType = forwarded.headers.get("Content-Type") ?? XLSX_TYPE;
   return new NextResponse(buf, {
     status: forwarded.status,
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: detail }, { status: 400 });
   }
 
-  return new NextResponse(ran.stdout, {
+  return new NextResponse(new Uint8Array(ran.stdout), {
     status: 200,
     headers: {
       "Content-Type": XLSX_TYPE,

@@ -22,7 +22,7 @@ function runCli(payload: Buffer): Promise<{ code: number; stdout: string; stderr
   const cli = path.join(repoRoot(), "cli.py");
 
   return new Promise((resolve, reject) => {
-    const child = spawn(python, [cli, "process", "-", "--format", "json"], {
+    const child = spawn(/* turbopackIgnore: true */ python, [cli, "process", "-", "--format", "json"], {
       cwd: repoRoot(),
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],

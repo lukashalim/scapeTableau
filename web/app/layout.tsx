@@ -20,7 +20,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "EscapeTableau — Tableau formulas to ANSI SQL",
   description:
-    "Drop a Tableau .twb or .twbx. Calculated fields become ANSI SQL in memory, never written to disk.",
+    "Drop a Tableau .twb or .twbx. Transpile calculated fields to ANSI SQL, extract packaged tables, and inspect schema in memory.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

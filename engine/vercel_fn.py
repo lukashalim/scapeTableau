@@ -8,8 +8,10 @@ from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import unquote
 
-from engine import transpile
+from engine import extract_to_xlsx, transpile
 from engine.schema import WorkbookParseError
+
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _json_bytes(payload: dict, status: int) -> tuple[int, bytes]:
@@ -47,19 +49,45 @@ def transpile_payload(filename: str, payload: bytes) -> tuple[int, bytes]:
     return 200, result.model_dump_json().encode("utf-8")
 
 
+def extract_payload(filename: str, payload: bytes) -> tuple[int, bytes, str]:
+    name = filename.lower()
+    if not name.endswith(".twb") and not name.endswith(".twbx"):
+        status, body = _json_bytes({"error": "Only .twb and .twbx workbooks are accepted."}, 400)
+        return status, body, "application/json; charset=utf-8"
+    if not payload:
+        status, body = _json_bytes({"error": "File is empty."}, 400)
+        return status, body, "application/json; charset=utf-8"
+    try:
+        xlsx, _inventory = extract_to_xlsx(payload)
+    except WorkbookParseError as exc:
+        status, body = _json_bytes({"error": exc.message}, 400)
+        return status, body, "application/json; charset=utf-8"
+    except Exception as exc:  # noqa: BLE001
+        status, body = _json_bytes({"error": str(exc)}, 400)
+        return status, body, "application/json; charset=utf-8"
+    return 200, xlsx, XLSX_TYPE
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 — Vercel Python entrypoint
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         content_type = self.headers.get("Content-Type") or ""
+        path = self.path.split("?", 1)[0]
         upload = extract_upload(content_type, body)
         if upload is None:
             status, payload = _json_bytes({"error": "Upload a .twb or .twbx file."}, 400)
+            ctype = "application/json; charset=utf-8"
+        elif path.rstrip("/").endswith("/extract"):
+            status, payload, ctype = extract_payload(*upload)
         else:
             status, payload = transpile_payload(*upload)
+            ctype = "application/json; charset=utf-8"
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
+        if ctype == XLSX_TYPE:
+            self.send_header("Content-Disposition", 'attachment; filename="scapetableau-extract.xlsx"')
         self.end_headers()
         self.wfile.write(payload)
 

@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from engine.schema import CalculatedField, DatasourceInfo, ParseStatus, TranspileResult
+from engine.schema import (
+    CalculatedField,
+    DashboardInfo,
+    DatasourceInfo,
+    ExtractInventory,
+    InspectSnapshot,
+    ParseStatus,
+    TranspileResult,
+)
 
 
 def _sql_ident(name: str) -> str:
@@ -139,6 +147,9 @@ def assemble_result(
     *,
     workbook_name: str | None = None,
     dialect: str = "ansi",
+    inspect: InspectSnapshot | None = None,
+    extract_inventory: ExtractInventory | None = None,
+    dashboards: list[DashboardInfo] | None = None,
 ) -> TranspileResult:
     return TranspileResult(
         calculated_fields=fields,
@@ -149,4 +160,7 @@ def assemble_result(
         markdown_audit=build_markdown_audit(fields, datasources),
         workbook_name=workbook_name,
         dialect=dialect,
+        inspect=inspect,
+        extract_inventory=extract_inventory,
+        dashboards=list(dashboards or (inspect.dashboards if inspect else [])),
     )

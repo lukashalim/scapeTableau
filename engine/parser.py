@@ -8,9 +8,16 @@ from pathlib import Path
 from typing import BinaryIO
 from xml.etree import ElementTree as ET
 
+from engine.redact import redact_connect_fragment, redact_password_attr
 from engine.schema import (
+    ArchiveKind,
+    ArchiveMember,
+    ColumnField,
     ConnectionInfo,
+    DashboardInfo,
+    DashboardZone,
     DatasourceInfo,
+    ParameterInfo,
     ParsedWorkbook,
     RawCalculatedField,
     RelationInfo,
@@ -59,19 +66,42 @@ def _is_zip(data: bytes, filename: str | None) -> bool:
     return False
 
 
-def _twb_from_zip(data: bytes) -> bytes:
+def member_kind(path: str) -> ArchiveKind:
+    lower = path.lower()
+    if lower.endswith(".twb"):
+        return "twb"
+    if lower.endswith(".csv") or lower.endswith(".tsv"):
+        return "csv"
+    if lower.endswith(".xlsx") or lower.endswith(".xls"):
+        return "xlsx"
+    if lower.endswith(".hyper"):
+        return "hyper"
+    return "other"
+
+
+def list_archive_members(data: bytes) -> list[ArchiveMember]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            twb_names = [
-                info.filename
-                for info in zf.infolist()
-                if not info.is_dir() and info.filename.lower().endswith(".twb")
-            ]
-            if not twb_names:
-                raise WorkbookParseError("Packaged workbook does not contain a .twb file")
-            return zf.read(twb_names[0])
-    except WorkbookParseError:
-        raise
+            members: list[ArchiveMember] = []
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                members.append(
+                    ArchiveMember(path=info.filename, size=int(info.file_size), kind=member_kind(info.filename))
+                )
+            return members
+    except zipfile.BadZipFile as exc:
+        raise WorkbookParseError("Invalid .twbx archive") from exc
+
+
+def _twb_from_zip(data: bytes) -> tuple[bytes, list[ArchiveMember]]:
+    members = list_archive_members(data)
+    twb_names = [m.path for m in members if m.kind == "twb"]
+    if not twb_names:
+        raise WorkbookParseError("Packaged workbook does not contain a .twb file")
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            return zf.read(twb_names[0]), members
     except zipfile.BadZipFile as exc:
         raise WorkbookParseError("Invalid .twbx archive") from exc
 
@@ -100,7 +130,79 @@ def _column_name_key(raw: str | None) -> str:
     return name
 
 
-def _parse_datasource(ds: ET.Element) -> tuple[DatasourceInfo | None, list[RawCalculatedField], dict[str, str]]:
+def _as_int(value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+def _hidden_flag(el: ET.Element) -> bool:
+    raw = (el.get("hidden") or "").strip().lower()
+    return raw in {"true", "1", "yes"}
+
+
+def _parse_connection(el: ET.Element) -> ConnectionInfo:
+    return ConnectionInfo(
+        class_name=redact_connect_fragment(el.get("class")),
+        dbname=redact_connect_fragment(el.get("dbname")),
+        server=redact_connect_fragment(el.get("server")),
+        filename=redact_connect_fragment(el.get("filename")),
+        username=redact_connect_fragment(el.get("username") or el.get("user")),
+        password=redact_password_attr(el.get("password")),
+        warehouse=redact_connect_fragment(el.get("warehouse")),
+        schema_name=redact_connect_fragment(el.get("schema")),
+    )
+
+
+def _parse_zone(el: ET.Element) -> DashboardZone:
+    children = [_parse_zone(child) for child in list(el) if _local_tag(child.tag) == "zone"]
+    return DashboardZone(
+        type=el.get("type"),
+        name=el.get("name") or el.get("id"),
+        x=_as_int(el.get("x")),
+        y=_as_int(el.get("y")),
+        w=_as_int(el.get("w")),
+        h=_as_int(el.get("h")),
+        children=children,
+    )
+
+
+def _parse_dashboards(root: ET.Element) -> list[DashboardInfo]:
+    dashboards: list[DashboardInfo] = []
+    for el in root.iter():
+        if _local_tag(el.tag) != "dashboard":
+            continue
+        width = None
+        height = None
+        zones: list[DashboardZone] = []
+        for child in el.iter():
+            tag = _local_tag(child.tag)
+            if tag == "size" and width is None:
+                width = _as_int(child.get("maxwidth") or child.get("minwidth") or child.get("width"))
+                height = _as_int(child.get("maxheight") or child.get("minheight") or child.get("height"))
+        for child in list(el):
+            if _local_tag(child.tag) in {"zones", "zone"}:
+                if _local_tag(child.tag) == "zone":
+                    zones.append(_parse_zone(child))
+                else:
+                    zones.extend(_parse_zone(z) for z in list(child) if _local_tag(z.tag) == "zone")
+        dashboards.append(
+            DashboardInfo(
+                name=el.get("name") or "dashboard",
+                width=width,
+                height=height,
+                zones=zones,
+            )
+        )
+    return dashboards
+
+
+def _parse_datasource(
+    ds: ET.Element,
+) -> tuple[DatasourceInfo, list[RawCalculatedField], dict[str, str], list[ParameterInfo], list[ColumnField]]:
     name = ds.get("name") or "datasource"
     caption = ds.get("caption")
     is_parameters = name.lower() == "parameters"
@@ -112,12 +214,7 @@ def _parse_datasource(ds: ET.Element) -> tuple[DatasourceInfo | None, list[RawCa
     for el in ds.iter():
         tag = _local_tag(el.tag)
         if tag == "connection":
-            info = ConnectionInfo(
-                class_name=el.get("class"),
-                dbname=el.get("dbname"),
-                server=el.get("server"),
-                filename=el.get("filename"),
-            )
+            info = _parse_connection(el)
             key = (info.class_name, info.dbname, info.server, info.filename)
             if any(key) and key not in seen_conn:
                 seen_conn.add(key)
@@ -126,7 +223,7 @@ def _parse_datasource(ds: ET.Element) -> tuple[DatasourceInfo | None, list[RawCa
             rel_type = el.get("type")
             custom_sql = None
             if rel_type == "text":
-                custom_sql = _text_content(el).strip() or None
+                custom_sql = redact_connect_fragment(_text_content(el).strip() or None)
             relations.append(
                 RelationInfo(
                     name=el.get("name"),
@@ -138,6 +235,8 @@ def _parse_datasource(ds: ET.Element) -> tuple[DatasourceInfo | None, list[RawCa
 
     name_map: dict[str, str] = {}
     calculated: list[RawCalculatedField] = []
+    fields: list[ColumnField] = []
+    parameters: list[ParameterInfo] = []
 
     for el in ds.iter():
         if _local_tag(el.tag) != "column":
@@ -156,39 +255,64 @@ def _parse_datasource(ds: ET.Element) -> tuple[DatasourceInfo | None, list[RawCa
             if _local_tag(child.tag) == "calculation" and child.get("formula") is not None:
                 calc = child
                 break
-        if calc is None:
+        formula = (calc.get("formula") if calc is not None else None) or None
+        is_calc = calc is not None and not is_parameters
+        field = ColumnField(
+            name=col_name or internal,
+            caption=col_caption or internal,
+            datatype=el.get("datatype"),
+            role=el.get("role"),
+            hidden=_hidden_flag(el),
+            calculated=bool(is_calc),
+            formula=formula,
+            datasource=name,
+            datasource_caption=caption,
+        )
+        fields.append(field)
+
+        if is_parameters:
+            parameters.append(
+                ParameterInfo(
+                    name=col_name or internal,
+                    caption=col_caption or internal,
+                    datatype=el.get("datatype"),
+                    value=el.get("value") or el.get("param-domain-type"),
+                    formula=formula,
+                    datasource=name,
+                )
+            )
+
+        if calc is None or is_parameters:
             continue
-        formula = calc.get("formula") or ""
         calculated.append(
             RawCalculatedField(
                 name=col_name or internal,
                 caption=col_caption or internal,
                 datatype=el.get("datatype"),
                 role=el.get("role"),
-                formula=formula,
+                formula=formula or "",
                 datasource_name=name,
                 datasource_caption=caption,
             )
         )
-
-    if is_parameters and not calculated:
-        return None, [], {}
 
     info = DatasourceInfo(
         name=name,
         caption=caption,
         connections=connections,
         relations=relations,
+        fields=fields,
     )
-    return info, calculated, name_map
+    return info, calculated, name_map, parameters, fields
 
 
 def parse_workbook(source: Source) -> ParsedWorkbook:
     data, filename = _read_bytes(source)
     if not data:
         raise WorkbookParseError("Workbook is empty")
+    archive_members: list[ArchiveMember] = []
     if _is_zip(data, filename):
-        data = _twb_from_zip(data)
+        data, archive_members = _twb_from_zip(data)
         if filename and filename.lower().endswith(".twbx"):
             filename = Path(filename).stem + ".twb"
     try:
@@ -206,17 +330,24 @@ def parse_workbook(source: Source) -> ParsedWorkbook:
     datasources: list[DatasourceInfo] = []
     calculated: list[RawCalculatedField] = []
     name_maps: dict[str, dict[str, str]] = {}
+    parameters: list[ParameterInfo] = []
+    all_fields: list[ColumnField] = []
 
     for ds_el in _iter_direct_datasources(root):
-        info, fields, name_map = _parse_datasource(ds_el)
-        if info is not None:
-            datasources.append(info)
-            name_maps[info.name] = name_map
+        info, fields, name_map, params, columns = _parse_datasource(ds_el)
+        datasources.append(info)
+        name_maps[info.name] = name_map
         calculated.extend(fields)
+        parameters.extend(params)
+        all_fields.extend(columns)
 
     return ParsedWorkbook(
         workbook_name=repo or workbook_name or filename,
         datasources=datasources,
         calculated_fields=calculated,
         name_maps=name_maps,
+        archive_members=archive_members,
+        parameters=parameters,
+        dashboards=_parse_dashboards(root),
+        fields=all_fields,
     )

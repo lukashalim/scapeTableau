@@ -8,7 +8,10 @@ import {
   Copy,
   Download,
   FileCode2,
+  FileSpreadsheet,
   Loader2,
+  Printer,
+  Search,
   ShieldCheck,
   Sparkles,
   Table2,
@@ -27,7 +30,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { CalculatedField, TranspileResult } from "@/lib/transpile-types";
+import type {
+  CalculatedField,
+  ColumnField,
+  DashboardInfo,
+  ExtractInventory,
+  TranspileResult,
+} from "@/lib/transpile-types";
 import { cn } from "@/lib/utils";
 
 const Editor = dynamic(() => import("@monaco-editor/react"), {
@@ -40,6 +49,7 @@ const Editor = dynamic(() => import("@monaco-editor/react"), {
 });
 
 type UiState = "empty" | "loading" | "error" | "success";
+type FieldFilter = "all" | "active" | "hidden";
 
 function statusVariant(status: CalculatedField["status"]): "default" | "secondary" | "destructive" | "outline" {
   if (status === "ok") return "default";
@@ -48,13 +58,295 @@ function statusVariant(status: CalculatedField["status"]): "default" | "secondar
   return "outline";
 }
 
+function printDashboard(dashboard: DashboardInfo) {
+  const html = dashboard.html ?? `<html><body><h1>${dashboard.name}</h1>${dashboard.svg ?? ""}</body></html>`;
+  const frame = window.open("", "_blank", "noopener,noreferrer,width=960,height=720");
+  if (!frame) {
+    toast.error("Pop-up blocked. Allow pop-ups to print the dashboard wireframe.");
+    return;
+  }
+  frame.document.open();
+  frame.document.write(html);
+  frame.document.close();
+  frame.focus();
+  frame.print();
+}
+
+function ExtractPanel({
+  inventory,
+  file,
+}: {
+  inventory: ExtractInventory | null | undefined;
+  file: File | null;
+}) {
+  const [busy, setBusy] = useState(false);
+  const downloadXlsx = useCallback(async () => {
+    if (!file) {
+      toast.error("Re-drop the workbook to download Excel.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const body = new FormData();
+      body.append("file", file, file.name);
+      const response = await fetch("/api/extract", { method: "POST", body });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message =
+          data && typeof data === "object" && "error" in data && typeof data.error === "string"
+            ? data.error
+            : "Extract failed.";
+        toast.error(message);
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "scapetableau-extract.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Extract failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [file]);
+
+  if (!inventory) {
+    return <p className="py-8 text-center text-sm text-muted-foreground">No extract inventory on this result.</p>;
+  }
+
+  const hyperOnly =
+    inventory.hyper_files.length > 0 && inventory.tabular_files.length === 0 && inventory.custom_sql.length === 0;
+  const noEmbed = inventory.archive_members.length === 0;
+
+  return (
+    <div className="space-y-4">
+      {noEmbed ? (
+        <Alert>
+          <AlertTitle>No packaged tables</AlertTitle>
+          <AlertDescription>
+            This is a plain .twb (or the sample workbook). Custom SQL still appears below. Pack a .twbx with CSV/TSV/XLS/XLSX
+            to convert those files into a downloadable workbook. Hyper files are never converted on Vercel.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {hyperOnly ? (
+        <Alert>
+          <AlertTitle>Hyper-only package</AlertTitle>
+          <AlertDescription>
+            Embedded .hyper extracts are listed for raw download locally. Excel conversion of Hyper is not available on
+            this web engine.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {inventory.notes.map((note) => (
+        <p key={note} className="text-sm text-muted-foreground">
+          {note}
+        </p>
+      ))}
+      <div className="flex justify-end">
+        <Button onClick={() => void downloadXlsx()} disabled={busy || !file}>
+          {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+          Download .xlsx
+        </Button>
+      </div>
+      <ScrollArea className="h-[280px] rounded-xl border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Path</TableHead>
+              <TableHead>Kind</TableHead>
+              <TableHead>Size</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {inventory.archive_members.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={3} className="text-muted-foreground">
+                  No archive members.
+                </TableCell>
+              </TableRow>
+            ) : (
+              inventory.archive_members.map((member) => (
+                <TableRow key={member.path}>
+                  <TableCell className="font-mono text-xs">{member.path}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline">{member.kind}</Badge>
+                  </TableCell>
+                  <TableCell>{member.size}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </ScrollArea>
+      {inventory.custom_sql.length > 0 ? (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">Custom SQL (not executed)</h3>
+          {inventory.custom_sql.map((entry, index) => (
+            <pre key={`${entry.datasource}-${index}`} className="overflow-auto rounded-xl border bg-muted/40 p-3 font-mono text-xs">
+              {entry.datasource ? `-- ${entry.datasource} / ${entry.name ?? "relation"}\n` : ""}
+              {entry.sql}
+            </pre>
+          ))}
+        </div>
+      ) : null}
+      {inventory.hyper_files.length > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Hyper files: {inventory.hyper_files.map((item) => item.path).join(", ")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function InspectPanel({ result }: { result: TranspileResult }) {
+  const inspect = result.inspect;
+  const [fieldFilter, setFieldFilter] = useState<FieldFilter>("all");
+  const fields: ColumnField[] = inspect?.fields ?? [];
+  const filtered = fields.filter((field) => {
+    if (fieldFilter === "hidden") return field.hidden;
+    if (fieldFilter === "active") return !field.hidden;
+    return true;
+  });
+  const dashboards = result.dashboards?.length ? result.dashboards : inspect?.dashboards ?? [];
+
+  if (!inspect) {
+    return <p className="py-8 text-center text-sm text-muted-foreground">Inspect metadata is unavailable.</p>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-2 text-sm">
+        <Badge>{inspect.counts.fields} fields</Badge>
+        <Badge variant="secondary">{inspect.counts.hidden_fields} hidden</Badge>
+        <Badge variant="outline">{inspect.counts.parameters} parameters</Badge>
+        <Badge variant="outline">{inspect.counts.dashboards} dashboards</Badge>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {result.datasources.map((ds) => (
+          <Card key={ds.name}>
+            <CardHeader>
+              <CardTitle className="text-base">{ds.caption || ds.name}</CardTitle>
+              <CardDescription className="font-mono text-xs">{ds.name}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {ds.connections.length === 0 ? (
+                <p className="text-muted-foreground">No live connection (parameters or bundled).</p>
+              ) : (
+                ds.connections.map((conn, index) => (
+                  <div key={`${ds.name}-${index}`} className="rounded-lg border p-2 font-mono text-xs">
+                    <div>class: {conn.class_name ?? "—"}</div>
+                    <div>server: {conn.server ?? "—"}</div>
+                    <div>database: {conn.dbname ?? "—"}</div>
+                    <div>file: {conn.filename ?? "—"}</div>
+                    {conn.password ? <div>password: {conn.password}</div> : null}
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium">Fields</p>
+          <select
+            className="h-8 rounded-md border bg-background px-2 text-sm"
+            value={fieldFilter}
+            onChange={(event) => setFieldFilter(event.target.value as FieldFilter)}
+          >
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="hidden">Hidden</option>
+          </select>
+        </div>
+        <ScrollArea className="h-[320px] rounded-xl border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Caption</TableHead>
+                <TableHead>Datasource</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Hidden</TableHead>
+                <TableHead>Calculated</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((field) => (
+                <TableRow key={`${field.datasource}-${field.name}`}>
+                  <TableCell className="font-medium">{field.caption}</TableCell>
+                  <TableCell>{field.datasource_caption || field.datasource}</TableCell>
+                  <TableCell>{field.role}</TableCell>
+                  <TableCell>{field.datatype}</TableCell>
+                  <TableCell>{field.hidden ? "yes" : ""}</TableCell>
+                  <TableCell>{field.calculated ? "yes" : ""}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+      </div>
+      <div className="space-y-2">
+        <p className="text-sm font-medium">Parameters</p>
+        {inspect.parameters.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No parameters.</p>
+        ) : (
+          <ul className="list-inside list-disc text-sm">
+            {inspect.parameters.map((param) => (
+              <li key={param.name}>
+                {param.caption} ({param.datatype ?? "unknown"}) {param.value ? `= ${param.value}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="space-y-3">
+        <p className="text-sm font-medium">Dashboards (wireframe — Print to PDF)</p>
+        {dashboards.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No dashboards in this workbook.</p>
+        ) : (
+          dashboards.map((dash) => (
+            <Card key={dash.name} className="print:border-0 print:shadow-none">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">{dash.name}</CardTitle>
+                  <CardDescription>
+                    {dash.width ?? "?"} × {dash.height ?? "?"}
+                  </CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => printDashboard(dash)}>
+                  <Printer data-icon="inline-start" />
+                  Print
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {dash.svg ? (
+                  <div className="overflow-auto" dangerouslySetInnerHTML={{ __html: dash.svg }} />
+                ) : (
+                  <p className="text-sm text-muted-foreground">No zone layout.</p>
+                )}
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function WorkbookConverter() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<File | null>(null);
   const { resolvedTheme } = useTheme();
   const [dragOver, setDragOver] = useState(false);
   const [state, setState] = useState<UiState>("empty");
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [heldFile, setHeldFile] = useState<File | null>(null);
   const [result, setResult] = useState<TranspileResult | null>(null);
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
@@ -76,6 +368,8 @@ export function WorkbookConverter() {
     setError(null);
     setFileName(file.name);
     setResult(null);
+    fileRef.current = file;
+    setHeldFile(file);
     const body = new FormData();
     body.append("file", file, file.name);
     try {
@@ -162,7 +456,7 @@ export function WorkbookConverter() {
           <p className="text-lg text-muted-foreground md:text-xl">
             Drop a <span className="font-medium text-foreground">.twb</span> or{" "}
             <span className="font-medium text-foreground">.twbx</span>. Calculated fields become warehouse-ready SQL —
-            parsed in memory, never written to disk.
+            then extract tables and inspect schema. Parsed in memory, never written to disk.
           </p>
         </div>
         <Alert className="max-w-3xl border-emerald-500/30 bg-emerald-500/5">
@@ -243,7 +537,7 @@ export function WorkbookConverter() {
       {state === "empty" ? (
         <Card className="border-dashed">
           <CardContent className="py-12 text-center text-muted-foreground">
-            Drop a workbook to see SQL, an audit table, and Markdown.
+            Drop a workbook to transpile SQL, extract packaged tables, and inspect schema.
           </CardContent>
         </Card>
       ) : null}
@@ -275,95 +569,119 @@ export function WorkbookConverter() {
               <span className="text-muted-foreground">{result.workbook_name}</span>
             ) : null}
           </div>
-          <Tabs defaultValue="sql">
+          <Tabs defaultValue="transpile">
             <TabsList>
-              <TabsTrigger value="sql">
+              <TabsTrigger value="transpile">
                 <FileCode2 data-icon="inline-start" />
-                SQL
+                Transpile to SQL/dbt
               </TabsTrigger>
-              <TabsTrigger value="audit">
-                <Table2 data-icon="inline-start" />
-                Audit
+              <TabsTrigger value="extract">
+                <FileSpreadsheet data-icon="inline-start" />
+                Extract Data
               </TabsTrigger>
-              <TabsTrigger value="markdown">
-                <BookOpen data-icon="inline-start" />
-                Markdown
+              <TabsTrigger value="inspect">
+                <Search data-icon="inline-start" />
+                Inspect Schema
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="sql" className="mt-3 space-y-2">
-              <div className="flex justify-end">
-                <Button variant="outline" size="sm" onClick={() => void copySql()}>
-                  {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-              <div className="overflow-hidden rounded-xl border">
-                <Editor
-                  height="480px"
-                  defaultLanguage="sql"
-                  value={result.sql_script}
-                  theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
-                  options={{
-                    readOnly: true,
-                    minimap: { enabled: false },
-                    fontSize: 13,
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                  }}
-                />
-              </div>
+            <TabsContent value="transpile" className="mt-3">
+              <Tabs defaultValue="sql">
+                <TabsList>
+                  <TabsTrigger value="sql">
+                    <FileCode2 data-icon="inline-start" />
+                    SQL
+                  </TabsTrigger>
+                  <TabsTrigger value="audit">
+                    <Table2 data-icon="inline-start" />
+                    Audit
+                  </TabsTrigger>
+                  <TabsTrigger value="markdown">
+                    <BookOpen data-icon="inline-start" />
+                    Markdown
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="sql" className="mt-3 space-y-2">
+                  <div className="flex justify-end">
+                    <Button variant="outline" size="sm" onClick={() => void copySql()}>
+                      {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+                      {copied ? "Copied" : "Copy"}
+                    </Button>
+                  </div>
+                  <div className="overflow-hidden rounded-xl border">
+                    <Editor
+                      height="480px"
+                      defaultLanguage="sql"
+                      value={result.sql_script}
+                      theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
+                      options={{
+                        readOnly: true,
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                      }}
+                    />
+                  </div>
+                </TabsContent>
+                <TabsContent value="audit" className="mt-3 space-y-3">
+                  <Input
+                    placeholder="Search caption, formula, SQL, status…"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+                  {filtered.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">No calculated fields match that search.</p>
+                  ) : (
+                    <ScrollArea className="h-[480px] rounded-xl border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Caption</TableHead>
+                            <TableHead>Datasource</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Tableau</TableHead>
+                            <TableHead>SQL</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filtered.map((field) => (
+                            <TableRow key={`${field.datasource}-${field.name}`}>
+                              <TableCell className="font-medium">{field.caption}</TableCell>
+                              <TableCell>{field.datasource}</TableCell>
+                              <TableCell>
+                                <Badge variant={statusVariant(field.status)}>{field.status}</Badge>
+                              </TableCell>
+                              <TableCell className="max-w-[220px] truncate font-mono text-xs" title={field.formula}>
+                                {field.formula}
+                              </TableCell>
+                              <TableCell className="max-w-[280px] truncate font-mono text-xs" title={field.sql}>
+                                {field.sql}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </ScrollArea>
+                  )}
+                </TabsContent>
+                <TabsContent value="markdown" className="mt-3 space-y-2">
+                  <div className="flex justify-end">
+                    <Button variant="outline" size="sm" onClick={downloadMarkdown}>
+                      <Download data-icon="inline-start" />
+                      Download .md
+                    </Button>
+                  </div>
+                  <pre className="max-h-[480px] overflow-auto rounded-xl border bg-muted/40 p-4 font-mono text-xs leading-relaxed">
+                    {result.markdown_audit}
+                  </pre>
+                </TabsContent>
+              </Tabs>
             </TabsContent>
-            <TabsContent value="audit" className="mt-3 space-y-3">
-              <Input
-                placeholder="Search caption, formula, SQL, status…"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              {filtered.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">No calculated fields match that search.</p>
-              ) : (
-                <ScrollArea className="h-[480px] rounded-xl border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Caption</TableHead>
-                        <TableHead>Datasource</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Tableau</TableHead>
-                        <TableHead>SQL</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filtered.map((field) => (
-                        <TableRow key={`${field.datasource}-${field.name}`}>
-                          <TableCell className="font-medium">{field.caption}</TableCell>
-                          <TableCell>{field.datasource}</TableCell>
-                          <TableCell>
-                            <Badge variant={statusVariant(field.status)}>{field.status}</Badge>
-                          </TableCell>
-                          <TableCell className="max-w-[220px] truncate font-mono text-xs" title={field.formula}>
-                            {field.formula}
-                          </TableCell>
-                          <TableCell className="max-w-[280px] truncate font-mono text-xs" title={field.sql}>
-                            {field.sql}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </ScrollArea>
-              )}
+            <TabsContent value="extract" className="mt-3">
+              <ExtractPanel inventory={result.extract_inventory} file={heldFile} />
             </TabsContent>
-            <TabsContent value="markdown" className="mt-3 space-y-2">
-              <div className="flex justify-end">
-                <Button variant="outline" size="sm" onClick={downloadMarkdown}>
-                  <Download data-icon="inline-start" />
-                  Download .md
-                </Button>
-              </div>
-              <pre className="max-h-[480px] overflow-auto rounded-xl border bg-muted/40 p-4 font-mono text-xs leading-relaxed">
-                {result.markdown_audit}
-              </pre>
+            <TabsContent value="inspect" className="mt-3">
+              <InspectPanel result={result} />
             </TabsContent>
           </Tabs>
         </div>
@@ -375,6 +693,13 @@ export function WorkbookConverter() {
           CLI:{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
             python cli.py process workbook.twb --output-dir ./output --format all --print-summary
+          </code>
+        </p>
+        <p>
+          Inspect / extract:{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">python cli.py inspect workbook.twb</code>{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+            python cli.py extract workbook.twbx --output extract.xlsx
           </code>
         </p>
         <p>Requires Python 3.11+ and <code className="font-mono text-xs">pip install -r requirements.txt</code>.</p>

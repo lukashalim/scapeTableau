@@ -12,6 +12,8 @@ Parsing and transpilation execute 100% in-memory. Your files are never persisted
 - **Zero-Dependency Python Engine:** Built entirely on standard Python utilities (`xml.etree` and `zipfile`). Fast, lightweight, and deterministic.
 - **Smart AST Formula Transpilation:** Recursively transpiles Tableau-specific syntax (`IIF`, `ZN`, `IFNULL`, `STARTSWITH`, `CONTAINS`, `CASE`) into standard ANSI SQL.
 - **Graceful LOD Fallbacks:** Complex Level of Detail (`FIXED`, `INCLUDE`, `EXCLUDE`) calculations are cleanly isolated and commented with `-- TODO: Review LOD logic` rather than crashing.
+- **Extract Data:** Packaged CSV/TSV/XLS/XLSX inside a `.twbx` become a downloadable `.xlsx` (via `openpyxl`). Custom SQL is copied to extra sheets and is not executed. Hyper extracts are listed only — they are not converted on Vercel.
+- **Inspect Schema:** Datasources, all columns (including hidden), Parameters, connections (passwords redacted), and dashboard wireframes you can Print to PDF.
 - **Multi-Interface Support:** Run it as a CLI tool, an offline Streamlit GUI, or a Next.js web application.
 
 ## Architecture
@@ -30,19 +32,19 @@ Parsing and transpilation execute 100% in-memory. Your files are never persisted
                      └───────────┬──────────┘
                                  │
                                  ▼
-                     ┌──────────────────────┐
-                     │ engine/transpiler.py │ (Formula Transpilation)
-                     └───────────┬──────────┘
-                                 │
-                                 ▼
-                     ┌──────────────────────┐
-                     │   TranspileResult    │
-                     └─────┬─────┬─────┬────┘
-                           │     │     │
-            ┌──────────────┘     │     └──────────────┐
-            ▼                    ▼                    ▼
-       [ cli.py ]        [ app_local.py ]      [ /api/transpile ]
-       (Typer CLI)         (Streamlit)         (Next.js App Router)
+          ┌──────────────────────┼──────────────────────┐
+          ▼                      ▼                      ▼
+ engine/transpiler.py     engine/extract.py      engine/inspect.py
+          │                      │                      │
+          └──────────┬───────────┴──────────┬───────────┘
+                     ▼                      ▼
+              TranspileResult         xlsx bytes
+          (calculated_fields, sql_script,
+           inspect, extract_inventory, dashboards)
+                     │
+            ┌────────┼────────┐
+            ▼        ▼        ▼
+       [ cli.py ] [ app_local.py ] [ /api/transpile + /api/extract ]
 ```
 
 ## Quickstart
@@ -62,6 +64,8 @@ cd scapeTableau
 # Install Python dependencies
 pip install -r requirements.txt
 ```
+
+`openpyxl` is required for Excel extract. `tableauhyperapi` is optional and never required; Hyper files stay listed, not converted, so uploads are never written to disk.
 
 ## Usage
 
@@ -90,7 +94,13 @@ for field in result.calculated_fields:
 
 # Access Markdown Audit Report
 print(result.markdown_audit)
+
+# Extra inspect / extract inventory (new keys; existing JSON keys unchanged)
+print(result.inspect.counts if result.inspect else None)
+print(result.extract_inventory)
 ```
+
+JSON still serializes calculated fields as `formula` / `sql` (not `raw_formula` / `sql_expression`).
 
 ### 2. Command Line Interface (CLI)
 
@@ -105,9 +115,19 @@ python cli.py process my_dashboard.twbx --output-dir ./output --format all
 
 # Pipe binary content via stdin (used for web API streaming)
 cat my_dashboard.twbx | python cli.py process - --format json
+
+# Inspect schema (JSON or markdown)
+python cli.py inspect samples/superstore_calcs.twb --format json
+python cli.py inspect samples/superstore_calcs.twb --format markdown
+
+# Extract packaged tables to xlsx
+python cli.py extract samples/superstore_calcs.twbx --output extract.xlsx
+
+# Stream xlsx bytes to stdout (web /api/extract)
+cat samples/superstore_calcs.twbx | python cli.py extract - > extract.xlsx
 ```
 
-CLI Options:
+CLI Options for `process`:
 
 - `--output-dir` / `-o`: Directory to save extracted `.sql`, `.md`, and `.json` artifacts.
 - `--format` / `-f`: Choose output format (`sql`, `markdown`, `json`, `all`). Default: `all`.
@@ -121,7 +141,7 @@ For non-technical users or local air-gapped environments without web access:
 streamlit run app_local.py
 ```
 
-Features a green "Local Offline Mode" status badge, sidebar selection for SQL dialects (ANSI SQL, Snowflake, PostgreSQL, DuckDB), live interactive field tables, and instant file download buttons.
+Workspace tabs: **Transpile to SQL/dbt**, **Extract Data**, **Inspect Schema**. Green "Local Offline Mode" status badge, sidebar SQL dialects, and download buttons. Hyper Excel conversion is not performed (uploads stay in memory).
 
 ### 4. Next.js Web App
 
@@ -133,16 +153,19 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:4317 in your browser.
+Open http://localhost:4317 in the browser.
 
 - Drag-and-drop target for `.twb` and `.twbx` files.
-- "Try with Sample Workbook" button to instantly test logic offline.
-- Monaco-style SQL preview with copy-to-clipboard functionality.
-- Searchable audit table for calculated fields.
+- "Try with Sample Workbook" button (inspect + layout; the sample `.twb` has no packaged CSV — use `samples/superstore_calcs.twbx` to exercise Excel extract).
+- Workspace tabs after a successful upload:
+  - **Transpile to SQL/dbt** — SQL / Audit / Markdown
+  - **Extract Data** — archive inventory, custom SQL, Hyper index, Download `.xlsx`
+  - **Inspect Schema** — connections (redacted), fields with hidden/active filter, parameters, dashboard wireframes + Print
+- APIs: `POST /api/transpile` (JSON metadata) and `POST /api/extract` (xlsx bytes). Uploads are never written to disk.
 
 ## Running Tests
 
-The test suite validates parser execution, formula tokenization, and edge-case handling against synthetic Tableau XML workbooks:
+The test suite validates parser execution, formula tokenization, extract/inspect, password redaction, and edge-case handling against synthetic Tableau XML workbooks:
 
 ```bash
 pytest engine/test_engine.py

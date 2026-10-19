@@ -19,6 +19,7 @@
       <column caption='Product Name' datatype='string' name='[Product Name]' role='dimension' type='nominal' />
       <column caption='Customer Name' datatype='string' name='[Customer Name]' role='dimension' type='nominal' />
       <column caption='Region' datatype='string' name='[Region]' role='dimension' type='nominal' />
+      <column caption='Internal Order Id' datatype='string' hidden='true' name='[Internal Order Id]' role='dimension' type='nominal' />
       <column caption='Category' datatype='string' name='[Category]' role='dimension' type='nominal' />
       <column caption='Profit Ratio' datatype='real' name='[Calculation_6012345678901234]' role='measure' type='quantitative'>
         <calculation class='tableau' formula='SUM([Profit]) / SUM([Sales])' />
@@ -61,7 +62,7 @@
       <connection class='federated'>
         <named-connections>
           <named-connection caption='warehouse' name='postgres.west'>
-            <connection class='postgres' dbname='analytics' filename='' server='localhost' />
+            <connection class='postgres' dbname='analytics' filename='' password='s3cret' server='localhost;PWD=hunter2' />
           </named-connection>
         </named-connections>
         <relation connection='postgres.west' name='WestOrders' type='text'>SELECT * FROM orders WHERE region = 'West'</relation>
@@ -72,6 +73,9 @@
     </datasource>
     <datasource hasconnection='false' inline='true' name='Parameters' version='18.1'>
       <aliases enabled='no' />
+      <column caption='Profit Goal' datatype='real' name='[Profit Goal]' param-domain-type='any' role='measure' type='quantitative' value='1000'>
+        <calculation class='tableau' formula='1000' />
+      </column>
     </datasource>
   </datasources>
   <worksheets>
@@ -85,4 +89,15 @@
       </table>
     </worksheet>
   </worksheets>
+  <dashboards>
+    <dashboard name='Overview Dash'>
+      <size maxheight='800' maxwidth='1000' minheight='800' minwidth='1000' />
+      <zones>
+        <zone h='100000' id='4' type='layout-basic' w='100000' x='0' y='0'>
+          <zone h='100000' name='Overview' type='layout-flow' w='50000' x='0' y='0' />
+          <zone h='100000' name='Notes' type='text' w='50000' x='50000' y='0' />
+        </zone>
+      </zones>
+    </dashboard>
+  </dashboards>
 </workbook>

@@ -10,7 +10,8 @@ from pathlib import Path
 import typer
 from tabulate import tabulate
 
-from engine import transpile
+from engine import extract_to_xlsx, transpile
+from engine.inspect import inspect_markdown
 from engine.schema import WorkbookParseError
 
 app = typer.Typer(
@@ -31,6 +32,11 @@ class OutputFormat(str, Enum):
     markdown = "markdown"
     json = "json"
     all = "all"
+
+
+class InspectFormat(str, Enum):
+    json = "json"
+    markdown = "markdown"
 
 
 def _read_source(path: str) -> bytes | Path:
@@ -127,6 +133,59 @@ def process(
         return
 
     _print_body(format, result.sql_script, result.markdown_audit, json_text)
+
+
+@app.command("inspect")
+def inspect_cmd(
+    path: str = typer.Argument(..., metavar="PATH", help="Workbook path, or - for stdin."),
+    format: InspectFormat = typer.Option(
+        InspectFormat.json,
+        "--format",
+        help="json | markdown",
+        case_sensitive=False,
+    ),
+) -> None:
+    try:
+        result = transpile(_read_source(path))
+    except WorkbookParseError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    snapshot = result.inspect
+    if snapshot is None:
+        typer.secho("Inspect payload missing", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    if format == InspectFormat.markdown:
+        sys.stdout.write(inspect_markdown(snapshot))
+        return
+    sys.stdout.write(snapshot.model_dump_json(indent=2))
+    sys.stdout.write("\n")
+
+
+@app.command("extract")
+def extract_cmd(
+    path: str = typer.Argument(..., metavar="PATH", help="Workbook path, or - for stdin (xlsx on stdout)."),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write .xlsx here. Omit with PATH=- to stream xlsx bytes to stdout.",
+    ),
+) -> None:
+    try:
+        xlsx, _inventory = extract_to_xlsx(_read_source(path))
+    except WorkbookParseError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:  # pragma: no cover
+        typer.secho(f"Extract failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(xlsx)
+        typer.secho(f"Wrote {output}", fg=typer.colors.GREEN, err=True)
+        return
+    sys.stdout.buffer.write(xlsx)
 
 
 if __name__ == "__main__":

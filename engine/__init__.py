@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import BinaryIO
 
 from engine.audit import assemble_result
+from engine.extract import extract_to_xlsx
+from engine.inspect import build_inspect
+from engine.extract import build_inventory
 from engine.parser import parse_workbook
 from engine.schema import (
     CalculatedField,
@@ -18,6 +21,7 @@ from engine.transpiler import resolve_internal_names, transpile_formula
 __all__ = [
     "transpile",
     "transpile_formula",
+    "extract_to_xlsx",
     "TranspileResult",
     "WorkbookParseError",
     "ParseStatus",
@@ -51,9 +55,14 @@ def transpile(
                 error=error,
             )
         )
+    inspect = build_inspect(workbook, fields)
+    inventory = build_inventory(workbook=workbook)
     return assemble_result(
         fields,
         workbook.datasources,
         workbook_name=workbook.workbook_name,
         dialect=dialect,
+        inspect=inspect,
+        extract_inventory=inventory,
+        dashboards=inspect.dashboards,
     )

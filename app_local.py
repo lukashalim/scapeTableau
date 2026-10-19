@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from engine import transpile
+from engine import extract_to_xlsx, transpile
 from engine.schema import WorkbookParseError
 
 st.set_page_config(page_title="EscapeTableau — local", page_icon="▦", layout="wide")
@@ -22,7 +22,7 @@ st.markdown(
 )
 
 st.title("EscapeTableau")
-st.caption("Convert Tableau calculated fields to SQL on this machine.")
+st.caption("Convert Tableau calculated fields to SQL, extract packaged tables, and inspect schema on this machine.")
 
 with st.sidebar:
     st.header("Dialect")
@@ -33,6 +33,7 @@ with st.sidebar:
     )
     st.divider()
     st.markdown("Run the CLI for batch jobs: `python cli.py process workbook.twb --output-dir ./output`")
+    st.markdown("`python cli.py inspect workbook.twb` · `python cli.py extract workbook.twbx -o out.xlsx`")
 
 uploaded = st.file_uploader(
     "Tableau workbook",
@@ -60,48 +61,92 @@ st.success(
     f"({ok} ok) across {len(result.datasources)} datasources."
 )
 
-sql_tab, table_tab, download_tab = st.tabs(["SQL", "Dataframe", "Downloads"])
+transpile_tab, extract_tab, inspect_tab = st.tabs(
+    ["Transpile to SQL/dbt", "Extract Data", "Inspect Schema"]
+)
 
-with sql_tab:
-    st.code(result.sql_script, language="sql")
+with transpile_tab:
+    sql_tab, table_tab, download_tab = st.tabs(["SQL", "Dataframe", "Downloads"])
+    with sql_tab:
+        st.code(result.sql_script, language="sql")
+    with table_tab:
+        frame = pd.DataFrame(
+            [
+                {
+                    "caption": f.caption,
+                    "datasource": f.datasource,
+                    "role": f.role,
+                    "datatype": f.datatype,
+                    "status": f.status.value,
+                    "formula": f.formula,
+                    "sql": f.sql,
+                    "error": f.error,
+                }
+                for f in result.calculated_fields
+            ]
+        )
+        if frame.empty:
+            st.warning("No calculated fields found in this workbook.")
+        else:
+            st.dataframe(frame, use_container_width=True)
+    with download_tab:
+        st.download_button(
+            "Download SQL",
+            data=result.sql_script.encode("utf-8"),
+            file_name="escapetableau.sql",
+            mime="text/sql",
+        )
+        st.download_button(
+            "Download audit Markdown",
+            data=result.markdown_audit.encode("utf-8"),
+            file_name="escapetableau-audit.md",
+            mime="text/markdown",
+        )
+        st.download_button(
+            "Download JSON",
+            data=result.model_dump_json(indent=2).encode("utf-8"),
+            file_name="escapetableau.json",
+            mime="application/json",
+        )
 
-with table_tab:
-    frame = pd.DataFrame(
-        [
-            {
-                "caption": f.caption,
-                "datasource": f.datasource,
-                "role": f.role,
-                "datatype": f.datatype,
-                "status": f.status.value,
-                "formula": f.formula,
-                "sql": f.sql,
-                "error": f.error,
-            }
-            for f in result.calculated_fields
-        ]
-    )
-    if frame.empty:
-        st.warning("No calculated fields found in this workbook.")
+with extract_tab:
+    inv = result.extract_inventory
+    if inv is None:
+        st.info("No inventory.")
     else:
-        st.dataframe(frame, use_container_width=True)
+        for note in inv.notes:
+            st.caption(note)
+        if inv.archive_members:
+            st.dataframe(
+                [{"path": m.path, "kind": m.kind, "size": m.size} for m in inv.archive_members],
+                use_container_width=True,
+            )
+        else:
+            st.info("Plain .twb — no packaged CSV/XLSX. Custom SQL is still exported as a sheet.")
+        if inv.hyper_files:
+            st.warning("Hyper files are listed, not converted. tableauhyperapi is optional and is not used on Vercel.")
+        xlsx, _ = extract_to_xlsx(payload)
+        st.download_button(
+            "Download .xlsx",
+            data=xlsx,
+            file_name="scapetableau-extract.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
-with download_tab:
-    st.download_button(
-        "Download SQL",
-        data=result.sql_script.encode("utf-8"),
-        file_name="escapetableau.sql",
-        mime="text/sql",
-    )
-    st.download_button(
-        "Download audit Markdown",
-        data=result.markdown_audit.encode("utf-8"),
-        file_name="escapetableau-audit.md",
-        mime="text/markdown",
-    )
-    st.download_button(
-        "Download JSON",
-        data=result.model_dump_json(indent=2).encode("utf-8"),
-        file_name="escapetableau.json",
-        mime="application/json",
-    )
+with inspect_tab:
+    snap = result.inspect
+    if snap is None:
+        st.info("No inspect snapshot.")
+    else:
+        st.json(snap.counts.model_dump())
+        st.subheader("Connections")
+        st.dataframe([c.model_dump() for c in snap.connections], use_container_width=True)
+        st.subheader("Fields")
+        st.dataframe([f.model_dump() for f in snap.fields], use_container_width=True)
+        st.subheader("Parameters")
+        st.dataframe([p.model_dump() for p in snap.parameters], use_container_width=True)
+        st.subheader("Dashboards")
+        for dash in snap.dashboards:
+            st.markdown(f"**{dash.name}**")
+            if dash.svg:
+                st.markdown(dash.svg, unsafe_allow_html=True)

@@ -117,6 +117,8 @@ export interface CalculatedField {
   status: "ok" | "unparseable" | "error" | "skipped";
   datasource: string;
   error?: string | null;
+  dax?: string | null;
+  dax_status?: "ok" | "unparseable" | "error" | "skipped" | null;
 }
 
 export interface TranspileResult {
@@ -124,8 +126,10 @@ export interface TranspileResult {
   datasources: DatasourceInfo[];
   sql_script: string;
   markdown_audit: string;
+  dax_script?: string | null;
   workbook_name?: string | null;
   dialect?: string;
+  target?: string;
   inspect?: InspectSnapshot | null;
   extract_inventory?: ExtractInventory | null;
   dashboards?: DashboardInfo[];

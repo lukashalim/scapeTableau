@@ -69,6 +69,9 @@ with transpile_tab:
     sql_tab, table_tab, download_tab = st.tabs(["SQL", "Dataframe", "Downloads"])
     with sql_tab:
         st.code(result.sql_script, language="sql")
+        if result.dax_script:
+            st.subheader("DAX")
+            st.code(result.dax_script, language="dax")
     with table_tab:
         frame = pd.DataFrame(
             [
@@ -80,6 +83,7 @@ with transpile_tab:
                     "status": f.status.value,
                     "formula": f.formula,
                     "sql": f.sql,
+                    "dax": f.dax,
                     "error": f.error,
                 }
                 for f in result.calculated_fields
@@ -101,6 +105,12 @@ with transpile_tab:
             data=result.markdown_audit.encode("utf-8"),
             file_name="escapetableau-audit.md",
             mime="text/markdown",
+        )
+        st.download_button(
+            "Download DAX",
+            data=(result.dax_script or "").encode("utf-8"),
+            file_name="escapetableau.dax",
+            mime="text/plain",
         )
         st.download_button(
             "Download JSON",

@@ -86,6 +86,15 @@ class DashboardInfo(BaseModel):
     html: str | None = None
 
 
+class WorksheetInfo(BaseModel):
+    name: str
+    datasource: str | None = None
+    rows: list[str] = Field(default_factory=list)
+    cols: list[str] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    used_fields: list[str] = Field(default_factory=list)
+
+
 class ArchiveMember(BaseModel):
     path: str
     size: int
@@ -147,6 +156,8 @@ class CalculatedField(BaseModel):
     status: ParseStatus
     datasource: str
     error: str | None = None
+    dax: str = ""
+    dax_status: ParseStatus | None = None
 
     @property
     def raw_formula(self) -> str:
@@ -169,6 +180,8 @@ class TranspileResult(BaseModel):
     inspect: InspectSnapshot | None = None
     extract_inventory: ExtractInventory | None = None
     dashboards: list[DashboardInfo] = Field(default_factory=list)
+    dax_script: str = ""
+    target: str = "sql"
 
     def model_dump_json_result(self) -> str:
         return self.model_dump_json(indent=2)
@@ -196,3 +209,4 @@ class ParsedWorkbook(BaseModel):
     parameters: list[ParameterInfo] = Field(default_factory=list)
     dashboards: list[DashboardInfo] = Field(default_factory=list)
     fields: list[ColumnField] = Field(default_factory=list)
+    worksheets: list[WorksheetInfo] = Field(default_factory=list)

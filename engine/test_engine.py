@@ -46,13 +46,43 @@ def test_contains_expression_concat() -> None:
     assert sql == "\"Product Name\" LIKE '%' || \"Category\" || '%'"
 
 
-def test_lod_unparseable_comment() -> None:
+def test_lod_fixed_window() -> None:
     formula = "{FIXED [Region] : SUM([Sales])}"
     sql, status, err = transpile_formula(formula)
+    assert status == ParseStatus.ok
+    assert err is None
+    assert sql == 'SUM("Sales") OVER (PARTITION BY "Region")'
+
+
+def test_lod_fixed_no_dims() -> None:
+    sql, status, _ = transpile_formula("{FIXED : SUM([Sales])}")
+    assert status == ParseStatus.ok
+    assert sql == 'SUM("Sales") OVER ()'
+
+
+def test_include_without_view_grain() -> None:
+    sql, status, err = transpile_formula("{INCLUDE [Category] : SUM([Sales])}")
+    assert status == ParseStatus.unparseable
+    assert err == "INCLUDE/EXCLUDE requires view grain"
+    assert "Review LOD logic" in sql
+
+
+def test_iif_and_zn_dax() -> None:
+    dax, status, err = transpile_formula("IIF([Sales] > 0, [Profit], 0)", target="dax")
+    assert status == ParseStatus.ok
+    assert err is None
+    assert dax == "IF([Sales] > 0, [Profit], 0)"
+    zn, zn_status, _ = transpile_formula("ZN([Profit])", target="dax")
+    assert zn_status == ParseStatus.ok
+    assert zn == "IF(ISBLANK([Profit]), 0, [Profit])"
+
+
+def test_lod_dax_todo_comment() -> None:
+    dax, status, err = transpile_formula("{FIXED [Region] : SUM([Sales])}", target="dax")
     assert status == ParseStatus.unparseable
     assert err == "LOD expression"
-    assert sql.startswith("-- TODO: Review LOD logic:")
-    assert "FIXED" in sql
+    assert dax.startswith("// TODO: Review LOD logic:")
+    assert "FIXED" in dax
 
 
 def test_if_elseif_end() -> None:
@@ -90,6 +120,7 @@ def test_sample_workbook_round_trip() -> None:
     dumped = json.loads(result.model_dump_json())
     first = dumped["calculated_fields"][0]
     assert "formula" in first and "sql" in first
+    assert "dax" in first
     assert "raw_formula" not in first
     assert "sql_expression" not in first
 
@@ -97,11 +128,15 @@ def test_sample_workbook_round_trip() -> None:
     assert contains.sql == "\"Product Name\" LIKE '%Table%'"
 
     lod = next(f for f in result.calculated_fields if f.caption == "Regional Sales")
-    assert lod.status == ParseStatus.unparseable
+    assert lod.status == ParseStatus.ok
+    assert 'SUM("Sales") OVER (PARTITION BY "Region")' == lod.sql
+    assert lod.dax.startswith("// TODO: Review LOD logic:")
 
     resolved = next(f for f in result.calculated_fields if f.caption == "Ratio Abs")
-    assert '"Profit Ratio"' in resolved.sql
+    assert 'ABS((SUM("Profit") / SUM("Sales")))' == resolved.sql
     assert "Calculation_" not in resolved.sql
+    assert result.dax_script
+    assert "{{ config" not in result.sql_script
 
     ds_names = {ds.caption or ds.name for ds in result.datasources}
     assert "Sample Superstore" in ds_names

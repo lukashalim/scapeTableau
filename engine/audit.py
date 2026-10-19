@@ -24,14 +24,12 @@ def _view_name(field: CalculatedField) -> str:
 
 
 def _primary_relation(ds: DatasourceInfo) -> str:
+    from engine.transpiler import normalize_table_name
+
     for rel in ds.relations:
-        if rel.table:
-            table = rel.table.strip()
-            if table.startswith("[") and table.endswith("]"):
-                table = table[1:-1]
+        table = normalize_table_name(rel.table) or normalize_table_name(rel.name)
+        if table:
             return _sql_ident(table)
-        if rel.name:
-            return _sql_ident(rel.name)
     if ds.caption:
         return _sql_ident(ds.caption)
     return _sql_ident(ds.name)
@@ -60,6 +58,7 @@ def build_sql_script(
     *,
     workbook_name: str | None = None,
     dialect: str = "ansi",
+    script_style: str = "sql",
 ) -> str:
     lines: list[str] = [
         "-- EscapeTableau generated SQL",
@@ -73,6 +72,7 @@ def build_sql_script(
         lines.extend(_datasource_comment(ds))
         lines.append("")
 
+    ds_by_caption = {ds.caption: ds for ds in datasources if ds.caption}
     ds_by_name = {ds.name: ds for ds in datasources}
     for field in fields:
         if field.status != ParseStatus.ok:
@@ -85,13 +85,28 @@ def build_sql_script(
             lines.append("")
             continue
         view = _sql_ident(_view_name(field))
-        ds = ds_by_name.get(field.datasource)
-        from_rel = _primary_relation(ds) if ds else _sql_ident("source")
-        lines.append("{{ config(materialized='view') }}")
+        ds = ds_by_name.get(field.datasource) or ds_by_caption.get(field.datasource)
+        from_rel = _primary_relation(ds) if ds else _sql_ident("Orders")
+        if script_style == "dbt":
+            lines.append("{{ config(materialized='view') }}")
         lines.append(f"CREATE VIEW {view} AS")
         lines.append("SELECT")
         lines.append(f"  {field.sql} AS {view}")
         lines.append(f"FROM {from_rel};")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_dax_script(fields: list[CalculatedField], *, workbook_name: str | None = None) -> str:
+    lines = ["// BIEscape generated DAX", "// Calculated-field measures / expressions"]
+    if workbook_name:
+        lines.append(f"// Source workbook: {workbook_name}")
+    lines.append("")
+    for field in fields:
+        lines.append(f"// {field.caption} ({field.status.value})")
+        body = field.dax or "// (no DAX)"
+        for dax_line in body.splitlines() or [body]:
+            lines.append(dax_line)
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -107,8 +122,8 @@ def build_markdown_audit(fields: list[CalculatedField], datasources: list[Dataso
         "",
         f"Calculated fields: **{len(fields)}**. Datasources: **{len(datasources)}**.",
         "",
-        "| Caption | Datasource | Role | Datatype | Status | Tableau formula | SQL |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Caption | Datasource | Role | Datatype | Status | Tableau formula | SQL | DAX |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for field in fields:
         lines.append(
@@ -122,6 +137,7 @@ def build_markdown_audit(fields: list[CalculatedField], datasources: list[Dataso
                     _md_cell(field.status.value),
                     _md_cell(field.formula),
                     _md_cell(field.sql),
+                    _md_cell(field.dax),
                 ]
             )
             + " |"
@@ -150,12 +166,18 @@ def assemble_result(
     inspect: InspectSnapshot | None = None,
     extract_inventory: ExtractInventory | None = None,
     dashboards: list[DashboardInfo] | None = None,
+    target: str = "sql",
+    script_style: str = "sql",
 ) -> TranspileResult:
     return TranspileResult(
         calculated_fields=fields,
         datasources=datasources,
         sql_script=build_sql_script(
-            fields, datasources, workbook_name=workbook_name, dialect=dialect
+            fields,
+            datasources,
+            workbook_name=workbook_name,
+            dialect=dialect,
+            script_style=script_style,
         ),
         markdown_audit=build_markdown_audit(fields, datasources),
         workbook_name=workbook_name,
@@ -163,4 +185,6 @@ def assemble_result(
         inspect=inspect,
         extract_inventory=extract_inventory,
         dashboards=list(dashboards or (inspect.dashboards if inspect else [])),
+        dax_script=build_dax_script(fields, workbook_name=workbook_name),
+        target=target,
     )

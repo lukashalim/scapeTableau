@@ -352,13 +352,14 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
   const [result, setResult] = useState<TranspileResult | null>(null);
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedDax, setCopiedDax] = useState(false);
 
   const filtered = useMemo(() => {
     if (!result) return [];
     const q = query.trim().toLowerCase();
     if (!q) return result.calculated_fields;
     return result.calculated_fields.filter((field) =>
-      [field.caption, field.datasource, field.formula, field.sql, field.status]
+      [field.caption, field.datasource, field.formula, field.sql, field.dax, field.status]
         .join(" ")
         .toLowerCase()
         .includes(q),
@@ -433,6 +434,14 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     setCopied(true);
     toast.success("SQL copied to clipboard");
     window.setTimeout(() => setCopied(false), 1600);
+  }, [result]);
+
+  const copyDax = useCallback(async () => {
+    if (!result?.dax_script) return;
+    await navigator.clipboard.writeText(result.dax_script);
+    setCopiedDax(true);
+    toast.success("DAX copied to clipboard");
+    window.setTimeout(() => setCopiedDax(false), 1600);
   }, [result]);
 
   const downloadMarkdown = useCallback(() => {
@@ -588,6 +597,10 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                     <FileCode2 data-icon="inline-start" />
                     SQL
                   </TabsTrigger>
+                  <TabsTrigger value="dax">
+                    <FileCode2 data-icon="inline-start" />
+                    DAX
+                  </TabsTrigger>
                   <TabsTrigger value="audit">
                     <Table2 data-icon="inline-start" />
                     Audit
@@ -620,9 +633,32 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                     />
                   </div>
                 </TabsContent>
+                <TabsContent value="dax" className="mt-3 space-y-2">
+                  <div className="flex justify-end">
+                    <Button variant="outline" size="sm" onClick={() => void copyDax()} disabled={!result.dax_script}>
+                      {copiedDax ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+                      {copiedDax ? "Copied" : "Copy"}
+                    </Button>
+                  </div>
+                  <div className="overflow-hidden rounded-xl border">
+                    <Editor
+                      height="480px"
+                      defaultLanguage="sql"
+                      value={result.dax_script ?? "// No DAX in this result"}
+                      theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
+                      options={{
+                        readOnly: true,
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                      }}
+                    />
+                  </div>
+                </TabsContent>
                 <TabsContent value="audit" className="mt-3 space-y-3">
                   <Input
-                    placeholder="Search caption, formula, SQL, status…"
+                    placeholder="Search caption, formula, SQL, DAX, status…"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                   />
@@ -638,6 +674,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                             <TableHead>Status</TableHead>
                             <TableHead>Tableau</TableHead>
                             <TableHead>SQL</TableHead>
+                            <TableHead>DAX</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -653,6 +690,9 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                               </TableCell>
                               <TableCell className="max-w-[280px] truncate font-mono text-xs" title={field.sql}>
                                 {field.sql}
+                              </TableCell>
+                              <TableCell className="max-w-[280px] truncate font-mono text-xs" title={field.dax ?? ""}>
+                                {field.dax}
                               </TableCell>
                             </TableRow>
                           ))}

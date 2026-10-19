@@ -9,6 +9,8 @@ from typing import BinaryIO
 from xml.etree import ElementTree as ET
 
 from engine.redact import redact_connect_fragment, redact_password_attr
+import re
+
 from engine.schema import (
     ArchiveKind,
     ArchiveMember,
@@ -22,6 +24,7 @@ from engine.schema import (
     RawCalculatedField,
     RelationInfo,
     WorkbookParseError,
+    WorksheetInfo,
 )
 
 Source = str | Path | bytes | BinaryIO
@@ -306,6 +309,106 @@ def _parse_datasource(
     return info, calculated, name_map, parameters, fields
 
 
+_SHELF_FIELD = re.compile(r"\[([^\]]+)\]")
+_MEASURE_PREFIXES = {
+    "sum",
+    "avg",
+    "min",
+    "max",
+    "cnt",
+    "ctd",
+    "count",
+    "countd",
+    "attr",
+    "med",
+    "stdev",
+    "var",
+    "usr",
+}
+
+
+def _shelf_token_name(inner: str) -> tuple[str, bool]:
+    """Return (field_name, is_dimension) from a Tableau shelf token."""
+
+    text = inner.strip()
+    if ":" in text:
+        parts = text.split(":")
+        prefix = parts[0].lower()
+        name = parts[1] if len(parts) > 1 else text
+        is_dim = prefix in {"none", "nk"} or prefix not in _MEASURE_PREFIXES
+        if prefix in _MEASURE_PREFIXES:
+            is_dim = False
+        return name, is_dim
+    if text.lower().startswith("federated.") or "." in text and text.lower().startswith("sqlproxy"):
+        return text, True
+    return text, True
+
+
+def _fields_from_shelf_text(text: str | None) -> list[tuple[str, bool]]:
+    if not text:
+        return []
+    found: list[tuple[str, bool]] = []
+    for match in _SHELF_FIELD.finditer(text):
+        inner = match.group(1)
+        if inner.lower().startswith("federated.") or inner.lower().startswith("sqlproxy"):
+            continue
+        found.append(_shelf_token_name(inner))
+    return found
+
+
+def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
+    sheets: list[WorksheetInfo] = []
+    for el in root.iter():
+        if _local_tag(el.tag) != "worksheet":
+            continue
+        name = el.get("name") or "sheet"
+        ds_name: str | None = None
+        rows: list[str] = []
+        cols: list[str] = []
+        dimensions: list[str] = []
+        used: list[str] = []
+
+        def _add_used(field_name: str, is_dim: bool) -> None:
+            if not field_name:
+                return
+            if field_name not in used:
+                used.append(field_name)
+            if is_dim and field_name not in dimensions:
+                dimensions.append(field_name)
+
+        for child in el.iter():
+            tag = _local_tag(child.tag)
+            if tag == "datasource" and ds_name is None:
+                ds_name = child.get("name") or ds_name
+            if tag in {"rows", "cols"}:
+                bits = _fields_from_shelf_text(_text_content(child))
+                target = rows if tag == "rows" else cols
+                for field_name, is_dim in bits:
+                    if field_name not in target:
+                        target.append(field_name)
+                    _add_used(field_name, is_dim)
+            if tag in {"encoding", "filter"}:
+                raw = child.get("field") or child.get("column") or child.get("name")
+                if raw:
+                    bits = _fields_from_shelf_text(raw if "[" in raw else f"[{raw}]")
+                    if not bits:
+                        key = _column_name_key(raw)
+                        bits = [(key, False)] if key else []
+                    for field_name, _is_dim in bits:
+                        _add_used(field_name, False)
+        sheets.append(
+            WorksheetInfo(
+                name=name,
+                datasource=ds_name,
+                rows=rows,
+                cols=cols,
+                dimensions=dimensions,
+                used_fields=used,
+            )
+        )
+    return sheets
+
+
 def parse_workbook(source: Source) -> ParsedWorkbook:
     data, filename = _read_bytes(source)
     if not data:
@@ -350,4 +453,5 @@ def parse_workbook(source: Source) -> ParsedWorkbook:
         parameters=parameters,
         dashboards=_parse_dashboards(root),
         fields=all_fields,
+        worksheets=_parse_worksheets(root),
     )

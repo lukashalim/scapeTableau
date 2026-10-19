@@ -17,7 +17,7 @@ from engine.schema import WorkbookParseError
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Convert Tableau calculated fields in .twb / .twbx files to ANSI SQL.",
+    help="Convert Tableau calculated fields in .twb / .twbx files to ANSI SQL and DAX.",
 )
 
 
@@ -32,6 +32,8 @@ class OutputFormat(str, Enum):
     markdown = "markdown"
     json = "json"
     all = "all"
+    dax = "dax"
+    dbt = "dbt"
 
 
 class InspectFormat(str, Enum):
@@ -45,30 +47,44 @@ def _read_source(path: str) -> bytes | Path:
     return Path(path)
 
 
-def _write_outputs(output_dir: Path, fmt: OutputFormat, sql: str, md: str, json_text: str) -> None:
+def _write_outputs(
+    output_dir: Path,
+    fmt: OutputFormat,
+    sql: str,
+    md: str,
+    json_text: str,
+    dax: str = "",
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    if fmt in {OutputFormat.sql, OutputFormat.all}:
+    if fmt in {OutputFormat.sql, OutputFormat.all, OutputFormat.dbt}:
         (output_dir / "escapetableau.sql").write_text(sql, encoding="utf-8")
+    if fmt in {OutputFormat.dax, OutputFormat.all}:
+        (output_dir / "escapetableau.dax").write_text(dax, encoding="utf-8")
     if fmt in {OutputFormat.markdown, OutputFormat.all}:
         (output_dir / "audit.md").write_text(md, encoding="utf-8")
     if fmt in {OutputFormat.json, OutputFormat.all}:
         (output_dir / "result.json").write_text(json_text, encoding="utf-8")
 
 
-def _print_body(fmt: OutputFormat, sql: str, md: str, json_text: str) -> None:
+def _print_body(fmt: OutputFormat, sql: str, md: str, json_text: str, dax: str = "") -> None:
     if fmt == OutputFormat.json:
         sys.stdout.write(json_text)
         if not json_text.endswith("\n"):
             sys.stdout.write("\n")
         return
-    if fmt == OutputFormat.sql:
+    if fmt in {OutputFormat.sql, OutputFormat.dbt}:
         sys.stdout.write(sql)
+        return
+    if fmt == OutputFormat.dax:
+        sys.stdout.write(dax)
         return
     if fmt == OutputFormat.markdown:
         sys.stdout.write(md)
         return
     sys.stdout.write("-- SQL\n")
     sys.stdout.write(sql)
+    sys.stdout.write("\n-- DAX\n")
+    sys.stdout.write(dax)
     sys.stdout.write("\n-- AUDIT\n")
     sys.stdout.write(md)
     sys.stdout.write("\n-- JSON\n")
@@ -91,7 +107,7 @@ def process(
     format: OutputFormat = typer.Option(
         OutputFormat.all,
         "--format",
-        help="sql | markdown | json | all",
+        help="sql | markdown | json | dax | dbt | all",
         case_sensitive=False,
     ),
     print_summary: bool = typer.Option(
@@ -99,11 +115,21 @@ def process(
         "--print-summary",
         help="Print an ASCII summary table (stderr when --format json so stdout stays JSON).",
     ),
-    dialect: str = typer.Option("ansi", "--dialect", help="ansi | snowflake | postgres | duckdb"),
+    dialect: str = typer.Option(
+        "ansi",
+        "--dialect",
+        help="ansi | snowflake | postgres | duckdb | dax",
+    ),
+    target: str = typer.Option(
+        "sql",
+        "--target",
+        help="sql | dax (status/script emphasis; JSON always includes both)",
+    ),
 ) -> None:
     try:
         source = _read_source(path)
-        result = transpile(source, dialect=dialect)
+        script_style = "dbt" if format == OutputFormat.dbt else "sql"
+        result = transpile(source, dialect=dialect, target=target, script_style=script_style)
     except WorkbookParseError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
@@ -128,11 +154,18 @@ def process(
             stream.write("\n")
 
     if output_dir is not None:
-        _write_outputs(output_dir, format, result.sql_script, result.markdown_audit, json_text)
+        _write_outputs(
+            output_dir,
+            format,
+            result.sql_script,
+            result.markdown_audit,
+            json_text,
+            dax=result.dax_script,
+        )
         typer.secho(f"Wrote {format.value} artifacts to {output_dir}", fg=typer.colors.GREEN, err=True)
         return
 
-    _print_body(format, result.sql_script, result.markdown_audit, json_text)
+    _print_body(format, result.sql_script, result.markdown_audit, json_text, dax=result.dax_script)
 
 
 @app.command("inspect")

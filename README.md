@@ -10,8 +10,8 @@ Parsing and transpilation execute 100% in-memory. Your files are never persisted
 
 - **In-Memory & Air-Gapped:** Zero disk writes and zero telemetry. Ideal for sensitive corporate workbook audits.
 - **Zero-Dependency Python Engine:** Built entirely on standard Python utilities (`xml.etree` and `zipfile`). Fast, lightweight, and deterministic.
-- **Smart AST Formula Transpilation:** Recursively transpiles Tableau-specific syntax (`IIF`, `ZN`, `IFNULL`, `STARTSWITH`, `CONTAINS`, `CASE`) into standard ANSI SQL.
-- **Graceful LOD Fallbacks:** Complex Level of Detail (`FIXED`, `INCLUDE`, `EXCLUDE`) calculations are cleanly isolated and commented with `-- TODO: Review LOD logic` rather than crashing.
+- **Smart AST Formula Transpilation:** Recursively transpiles Tableau-specific syntax (`IIF`, `ZN`, `IFNULL`, `STARTSWITH`, `CONTAINS`, `CASE`) into ANSI SQL and DAX.
+- **LOD SQL:** `FIXED` / `INCLUDE` / `EXCLUDE` become window functions or grain subqueries (INCLUDE/EXCLUDE use worksheet row/column grain). DAX LOD stays `// TODO: Review LOD logic`.
 - **Extract Data:** Packaged CSV/TSV/XLS/XLSX inside a `.twbx` become a downloadable `.xlsx` (via `openpyxl`). Custom SQL is copied to extra sheets and is not executed. Hyper extracts are listed only — they are not converted on Vercel.
 - **Inspect Schema:** Datasources, all columns (including hidden), Parameters, connections (passwords redacted), and dashboard wireframes you can Print to PDF.
 - **Multi-Interface Support:** Run it as a CLI tool, an offline Streamlit GUI, or a Next.js web application.
@@ -39,7 +39,7 @@ Parsing and transpilation execute 100% in-memory. Your files are never persisted
           └──────────┬───────────┴──────────┬───────────┘
                      ▼                      ▼
               TranspileResult         xlsx bytes
-          (calculated_fields, sql_script,
+          (calculated_fields, sql_script, dax_script,
            inspect, extract_inventory, dashboards)
                      │
             ┌────────┼────────┐
@@ -82,8 +82,9 @@ result = transpile("path/to/workbook.twbx")
 # Or pass raw bytes directly
 # result = transpile(file_bytes)
 
-# Print generated ANSI SQL views
+# Print generated ANSI SQL views and DAX
 print(result.sql_script)
+print(result.dax_script)
 
 # Inspect individual calculated fields
 for field in result.calculated_fields:
@@ -116,6 +117,12 @@ python cli.py process my_dashboard.twbx --output-dir ./output --format all
 # Pipe binary content via stdin (used for web API streaming)
 cat my_dashboard.twbx | python cli.py process - --format json
 
+# DAX (same parse; --dialect dax also selects DAX status)
+python cli.py process samples/superstore_calcs.twb --target dax --format dax
+
+# dbt-style CREATE VIEW (config block only in this format)
+python cli.py process samples/superstore_calcs.twb --format dbt
+
 # Inspect schema (JSON or markdown)
 python cli.py inspect samples/superstore_calcs.twb --format json
 python cli.py inspect samples/superstore_calcs.twb --format markdown
@@ -130,7 +137,9 @@ cat samples/superstore_calcs.twbx | python cli.py extract - > extract.xlsx
 CLI Options for `process`:
 
 - `--output-dir` / `-o`: Directory to save extracted `.sql`, `.md`, and `.json` artifacts.
-- `--format` / `-f`: Choose output format (`sql`, `markdown`, `json`, `all`). Default: `all`.
+- `--format` / `-f`: Choose output format (`sql`, `markdown`, `json`, `dax`, `dbt`, `all`). Default: `all`.
+- `--target`: `sql` (default) or `dax` for status emphasis. JSON always includes both `sql` and `dax`.
+- `--dialect`: `ansi` | `snowflake` | `postgres` | `duckdb` | `dax`.
 - `--print-summary`: Displays a clean terminal table of all extracted fields.
 
 ### 3. Streamlit Offline GUI
@@ -158,7 +167,7 @@ Open http://localhost:4317 in the browser.
 - Drag-and-drop target for `.twb` and `.twbx` files.
 - "Try with Sample Workbook" button (inspect + layout; the sample `.twb` has no packaged CSV — use `samples/superstore_calcs.twbx` to exercise Excel extract).
 - Workspace tabs after a successful upload:
-  - **Transpile to SQL/dbt** — SQL / Audit / Markdown
+  - **Transpile to SQL/dbt** — SQL / DAX / Audit / Markdown
   - **Extract Data** — archive inventory, custom SQL, Hyper index, Download `.xlsx`
   - **Inspect Schema** — connections (redacted), fields with hidden/active filter, parameters, dashboard wireframes + Print
 - APIs: `POST /api/transpile` (JSON metadata) and `POST /api/extract` (xlsx bytes). Uploads are never written to disk.
@@ -168,7 +177,7 @@ Open http://localhost:4317 in the browser.
 The test suite validates parser execution, formula tokenization, extract/inspect, password redaction, and edge-case handling against synthetic Tableau XML workbooks:
 
 ```bash
-pytest engine/test_engine.py
+pytest engine/test_engine.py tests/lod/validate.py
 ```
 
 ## License

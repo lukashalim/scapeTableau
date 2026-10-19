@@ -1,0 +1,93 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<workbook source-build='2024.1.0' source-platform='win' version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'>
+  <repository-location id='lod_test' path='/workbooks' />
+  <datasources>
+    <datasource caption='Orders' inline='true' name='federated.lod' version='18.1'>
+      <connection class='excel-direct'>
+        <relation name='Orders' table='[Orders$]' type='table' />
+      </connection>
+      <column caption='Region' datatype='string' name='[Region]' role='dimension' type='nominal' />
+      <column caption='Category' datatype='string' name='[Category]' role='dimension' type='nominal' />
+      <column caption='Customer' datatype='string' name='[Customer]' role='dimension' type='nominal' />
+      <column caption='Sales' datatype='real' name='[Sales]' role='measure' type='quantitative' />
+      <column caption='Profit' datatype='real' name='[Profit]' role='measure' type='quantitative' />
+      <column caption='Order Date' datatype='date' name='[Order Date]' role='dimension' type='ordinal' />
+      <column caption='Ship Date' datatype='date' name='[Ship Date]' role='dimension' type='ordinal' />
+      <column caption='Fixed Region Sales' datatype='real' name='[Fixed Region Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : SUM([Sales])}' />
+      </column>
+      <column caption='Grand Total Sales' datatype='real' name='[Grand Total Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED : SUM([Sales])}' />
+      </column>
+      <column caption='Include Category Sales' datatype='real' name='[Include Category Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{INCLUDE [Category] : SUM([Sales])}' />
+      </column>
+      <column caption='Exclude Region Sales' datatype='real' name='[Exclude Region Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{EXCLUDE [Region] : SUM([Sales])}' />
+      </column>
+      <column caption='Region Customers' datatype='integer' name='[Region Customers]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : COUNTD([Customer])}' />
+      </column>
+      <column caption='Nested Min Category' datatype='real' name='[Nested Min Category]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : MIN({FIXED [Region], [Category] : SUM([Sales])})}' />
+      </column>
+      <column caption='Region Share' datatype='real' name='[Region Share]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='[Fixed Region Sales] / [Grand Total Sales]' />
+      </column>
+      <column caption='Region Case' datatype='integer' name='[Region Case]' role='dimension' type='ordinal'>
+        <calculation class='tableau' formula='CASE [Region] WHEN &quot;East&quot; THEN 1 WHEN &quot;West&quot; THEN 2 ELSE 0 END' />
+      </column>
+      <column caption='Sales Band' datatype='string' name='[Sales Band]' role='dimension' type='nominal'>
+        <calculation class='tableau' formula='CASE WHEN [Sales] &gt; 100 THEN &quot;High&quot; ELSE &quot;Low&quot; END' />
+      </column>
+      <column caption='Scaled Sales' datatype='real' name='[Scaled Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='[Sales] * [Parameters].[Multiplier]' />
+      </column>
+      <column caption='Order Year' datatype='integer' name='[Order Year]' role='dimension' type='ordinal'>
+        <calculation class='tableau' formula='YEAR([Order Date])' />
+      </column>
+      <column caption='Ship Days' datatype='integer' name='[Ship Days]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='DATEDIFF(&#39;day&#39;, [Order Date], [Ship Date])' />
+      </column>
+      <column caption='Order Month' datatype='date' name='[Order Month]' role='dimension' type='ordinal'>
+        <calculation class='tableau' formula='DATETRUNC(&#39;month&#39;, [Order Date])' />
+      </column>
+      <column caption='Next Month' datatype='date' name='[Next Month]' role='dimension' type='ordinal'>
+        <calculation class='tableau' formula='DATEADD(&#39;month&#39;, 1, [Order Date])' />
+      </column>
+    </datasource>
+    <datasource hasconnection='false' inline='true' name='Parameters' version='18.1'>
+      <column caption='Multiplier' datatype='real' name='[Multiplier]' param-domain-type='any' role='measure' type='quantitative' value='2'>
+        <calculation class='tableau' formula='2' />
+      </column>
+    </datasource>
+  </datasources>
+  <worksheets>
+    <worksheet name='Sheet 1'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders' name='federated.lod' />
+          </datasources>
+        </view>
+        <rows>[federated.lod].[none:Region:nk]</rows>
+        <cols>
+          [federated.lod].[sum:Fixed Region Sales:qk],
+          [federated.lod].[sum:Grand Total Sales:qk],
+          [federated.lod].[sum:Include Category Sales:qk],
+          [federated.lod].[sum:Exclude Region Sales:qk],
+          [federated.lod].[sum:Region Customers:qk],
+          [federated.lod].[sum:Nested Min Category:qk],
+          [federated.lod].[sum:Region Share:qk],
+          [federated.lod].[sum:Region Case:qk],
+          [federated.lod].[sum:Sales Band:qk],
+          [federated.lod].[sum:Scaled Sales:qk],
+          [federated.lod].[sum:Order Year:qk],
+          [federated.lod].[sum:Ship Days:qk],
+          [federated.lod].[sum:Order Month:qk],
+          [federated.lod].[sum:Next Month:qk]
+        </cols>
+      </table>
+    </worksheet>
+  </worksheets>
+</workbook>

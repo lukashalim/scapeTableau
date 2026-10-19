@@ -124,28 +124,28 @@ export const LANDING_PAGES: LandingPage[] = [
     slug: "tableau-to-sql",
     title: "Convert Tableau calculated fields to SQL | BIEscape",
     description:
-      "Transpile Tableau calculated fields (IIF, ZN, IFNULL, CONTAINS, and more) into ANSI SQL and dbt-ready CREATE VIEW scripts. LOD expressions become TODO comments.",
+      "Transpile Tableau calculated fields (IIF, ZN, IFNULL, CONTAINS, FIXED/INCLUDE/EXCLUDE LOD) into ANSI SQL and dbt-ready CREATE VIEW scripts. DAX is generated in the same pass.",
     h1: "Convert a Tableau workbook to SQL",
     lede: "BIEscape transpiles calculated fields into ANSI SQL you can drop into Snowflake, BigQuery, Postgres, DuckDB, or a dbt model file. It does not rebuild the full semantic layer or write schema.yml.",
     capabilities: [
-      "Map IIF, IF/THEN, ZN, IFNULL, CONTAINS, STARTSWITH, LEN, TRIM, UPPER/LOWER, ABS, ROUND to ANSI SQL.",
-      "Emit a CREATE VIEW sql_script plus a markdown audit of each field.",
-      "Leave FIXED / INCLUDE / EXCLUDE LODs as -- TODO: Review LOD logic comments.",
+      "Map IIF, IF/THEN, ZN, IFNULL, CONTAINS, STARTSWITH, LEN, TRIM, UPPER/LOWER, ABS, ROUND, CASE, and date functions to ANSI SQL.",
+      "Emit FIXED LOD as window functions or grain CTEs/subqueries; INCLUDE/EXCLUDE at the worksheet view grain.",
+      "Emit a CREATE VIEW sql_script (dbt config only with --format dbt) plus a markdown audit of each field.",
     ],
     limitations: [
       "Unknown functions become SQL comments rather than guessed translations.",
-      "dbt output is drop-in SQL, not a generated schema.yml or package scaffold.",
+      "dbt output is drop-in SQL, not a generated schema.yml or package scaffold. Table calculations stay as TODOs.",
     ],
     faqs: [
       {
         question: "Does BIEscape convert Tableau to SQL?",
         answer:
-          "It transpiles calculated-field formulas to ANSI SQL and a CREATE VIEW script. Datasource joins, LOD logic, and table calcs are not fully rewritten.",
+          "It transpiles calculated-field formulas to ANSI SQL and a CREATE VIEW script. Datasource joins and table calcs are not fully rewritten.",
       },
       {
         question: "Are LOD calculations converted?",
         answer:
-          "FIXED, INCLUDE, and EXCLUDE stay isolated as TODO comments. They are not rewritten as SQL.",
+          "FIXED, INCLUDE, and EXCLUDE are rewritten as SQL window functions or grain subqueries. INCLUDE/EXCLUDE need a worksheet view grain (for example Sheet 1 rows/cols).",
       },
       {
         question: "Can I run this locally?",
@@ -158,28 +158,28 @@ export const LANDING_PAGES: LandingPage[] = [
     slug: "tableau-to-power-bi",
     title: "Tableau to Power BI migration helper | BIEscape",
     description:
-      "BIEscape extracts Tableau calculated fields, packaged tables, and schema so you can migrate toward Power BI. It does not emit PBIX or Power Query today.",
+      "BIEscape extracts Tableau calculated fields to SQL and DAX, plus packaged tables and schema, so you can migrate toward Power BI. It does not emit PBIX.",
     h1: "Tableau to Power BI: extract the logic first",
-    lede: "A Power BI migration still needs DAX, Power Query, and a PBIX. BIEscape gives you the Tableau side of that work: SQL from calculated fields, Excel from packaged CSV/XLSX, and a schema inspect. It does not generate a Power BI file.",
+    lede: "A Power BI migration still needs a PBIX and Power Query. BIEscape gives you the Tableau side of that work: SQL and DAX from calculated fields, Excel from packaged CSV/XLSX, and a schema inspect. It does not generate a Power BI file.",
     capabilities: [
-      "SQL transpile of Tableau calculated fields for warehouse or Power Query reimplementation.",
+      "SQL and DAX transpile of Tableau calculated fields for warehouse views or Power BI measures.",
       "Excel extract of CSV/XLSX packaged in the twbx (not Hyper).",
       "Schema inspect: columns, hidden fields, parameters, dashboard wireframes.",
     ],
     limitations: [
-      "BIEscape does not emit PBIX, PBIT, DAX, or Power Query M.",
+      "BIEscape does not emit PBIX, PBIT, or Power Query M. LOD expressions stay as DAX TODO comments.",
       "Hyper extracts are listed but not converted.",
     ],
     faqs: [
       {
         question: "Does BIEscape convert Tableau to Power BI?",
         answer:
-          "No. It extracts Tableau calculations, packaged tabular data, and schema so you can rebuild in Power BI. It does not write a PBIX.",
+          "It transpiles calculated fields to DAX expressions and SQL, and extracts packaged tables. It does not write a PBIX.",
       },
       {
         question: "What should I use it for in a PBI migration?",
         answer:
-          "Inventory fields, copy transpiled SQL as a starting point for measures or warehouse views, and export packaged CSV/XLSX when Hyper is not involved.",
+          "Inventory fields, copy transpiled DAX or SQL as a starting point for measures, and export packaged CSV/XLSX when Hyper is not involved.",
       },
       {
         question: "Where do I start?",
@@ -202,7 +202,7 @@ export const LANDING_PAGES: LandingPage[] = [
     ],
     limitations: [
       "BIEscape does not emit LookML, looks, or Looker dashboards.",
-      "LOD calculations remain TODO comments, not LookML native derived tables.",
+      "INCLUDE/EXCLUDE LOD SQL needs a worksheet grain; table calcs stay as TODOs. LookML is not generated.",
     ],
     faqs: [
       {
@@ -253,6 +253,40 @@ export const LANDING_PAGES: LandingPage[] = [
         question: "Are Hyper extracts included?",
         answer:
           "They are listed in the extract inventory and are not converted on the hosted engine.",
+      },
+    ],
+  },
+  {
+    slug: "tableau-to-dax",
+    title: "Convert Tableau calculated fields to DAX | BIEscape",
+    description:
+      "Transpile Tableau calculated fields (IIF, ZN, IFNULL, CONTAINS, IF/THEN) into DAX expressions for Power BI measures. LOD expressions stay as TODO comments. No PBIX export.",
+    h1: "Convert Tableau calculations to DAX",
+    lede: "BIEscape maps Tableau calculated-field formulas to DAX in the same parse as SQL. Use the Transpile workspace DAX view to copy measures. It does not emit a PBIX or load Hyper extracts.",
+    capabilities: [
+      "IIF → IF, ZN → IF(ISBLANK(), 0, x), IFNULL → IF(ISBLANK()), CONTAINS → CONTAINSSTRING.",
+      "IF / THEN / ELSEIF as nested IF; field names stay [Field Name].",
+      "Same upload fills SQL and DAX so you can compare warehouse views with Power BI measures.",
+    ],
+    limitations: [
+      "FIXED / INCLUDE / EXCLUDE LOD expressions are DAX TODO comments, not CALCULATE/ALLEXCEPT rewrites.",
+      "No PBIX, PBIT, or Power Query M export. Hyper extracts are listed but not converted.",
+    ],
+    faqs: [
+      {
+        question: "Does BIEscape convert Tableau to DAX?",
+        answer:
+          "Yes for calculated-field expressions (IIF, ZN, IFNULL, CONTAINS, IF/THEN, aggregations). It does not build a Power BI data model file.",
+      },
+      {
+        question: "Are LOD calculations converted to DAX?",
+        answer:
+          "Not yet. LOD formulas are emitted as // TODO: Review LOD logic comments. SQL transpile does rewrite LODs as windows or grain subqueries.",
+      },
+      {
+        question: "Where do I copy DAX?",
+        answer:
+          "Upload a workbook on the homepage converter, open Transpile, then the DAX tab. CLI: python cli.py process file.twb --target dax --format dax.",
       },
     ],
   },

@@ -1,4 +1,4 @@
-# EscapeTableau web UI
+# BIEscape web UI
 
 Next.js App Router client for the Python conversion engine.
 

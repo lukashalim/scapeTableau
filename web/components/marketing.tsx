@@ -1,13 +1,13 @@
 import { FileSpreadsheet, Search, ShieldCheck, Terminal } from "lucide-react";
+import Link from "next/link";
 
+import { SiteFooter } from "@/components/site-footer";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { GITHUB_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
-
-const GITHUB_URL = "https://github.com/lukashalim/scapeTableau";
-const WEB_APP_URL = "https://scapetableau-botsbridge.vercel.app";
 
 interface FeatureRow {
   feature: string;
@@ -33,7 +33,7 @@ const FEATURES: FeatureRow[] = [
   {
     feature: "Extract Data",
     ships:
-      "Packaged CSV / TSV / XLS / XLSX become a downloadable .xlsx. Custom SQL is copied to extra sheets, not executed. Hyper extracts are listed only.",
+      "Packaged CSV / TSV / XLS / XLSX become a downloadable .xlsx. Custom SQL is copied to extra sheets, not executed. Hyper extracts are listed but not converted.",
   },
   {
     feature: "Inspect Schema",
@@ -74,46 +74,52 @@ const ARCHITECTURE = `                       [ .twb / .twbx bytes ]
             ▼        ▼        ▼
        [ cli.py ] [ app_local.py ] [ /api/transpile + /api/extract ]`;
 
-export function Marketing() {
+export function MarketingHero() {
+  return (
+    <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 pt-12 md:pt-20">
+      <div className="max-w-3xl space-y-5">
+        <h1 className="font-heading text-4xl font-semibold tracking-tight text-balance md:text-5xl">
+          Tableau to Power BI migration tool. Open a TWBX without Tableau. Convert Tableau workbooks to SQL.
+        </h1>
+        <p className="text-lg text-muted-foreground md:text-xl">
+          BIEscape extracts Tableau calculated fields, packaged CSV/XLSX, and schema so you can migrate toward Power BI,
+          warehouses, or dbt. It does not emit PBIX, LookML, or QuickSight assets. .hyper extracts are listed but not
+          converted.
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <a href="#converter" className={cn(buttonVariants({ size: "lg" }))}>
+            🚀 Launch Web App
+          </a>
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+          >
+            Clone the repo
+          </a>
+        </div>
+      </div>
+      <Alert className="max-w-3xl border-emerald-500/30 bg-emerald-500/5">
+        <ShieldCheck className="text-emerald-600 dark:text-emerald-400" />
+        <AlertTitle>In-memory on this site. Air-gapped on your machine.</AlertTitle>
+        <AlertDescription>
+          Hosted conversion stays in process memory: no disk persist, no cloud object store, no LLM. That is not the
+          same as air-gapped. For on-device conversion,{" "}
+          <a href={GITHUB_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+            clone the repo
+          </a>{" "}
+          and use <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">python cli.py process</code> or{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">streamlit run app_local.py</code>.
+        </AlertDescription>
+      </Alert>
+    </section>
+  );
+}
+
+export function MarketingBelow() {
   return (
     <div className="flex flex-col">
-      <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-20">
-        <div className="max-w-3xl space-y-5">
-          <h1 className="font-heading text-4xl font-semibold tracking-tight text-balance md:text-5xl">
-            Instantly Extract &amp; Transpile Tableau Calculated Fields into Clean ANSI SQL &amp; dbt Models.
-          </h1>
-          <p className="text-lg text-muted-foreground md:text-xl">
-            scapeTableau is a zero-dependency, pure-Python engine for migrating legacy Tableau workbooks (
-            <span className="font-medium text-foreground">.twb</span> and{" "}
-            <span className="font-medium text-foreground">.twbx</span>) into warehouse SQL for Snowflake, BigQuery,
-            Postgres, DuckDB, and dbt.
-          </p>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <a href="#converter" className={cn(buttonVariants({ size: "lg" }))}>
-              🚀 Launch Web App
-            </a>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noreferrer"
-              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
-            >
-              ⭐ View on GitHub
-            </a>
-          </div>
-        </div>
-        <Alert className="max-w-3xl border-emerald-500/30 bg-emerald-500/5">
-          <ShieldCheck className="text-emerald-600 dark:text-emerald-400" />
-          <AlertTitle>In-memory on this site. Air-gapped on your machine.</AlertTitle>
-          <AlertDescription>
-            Hosted conversion stays in process memory: no disk persist, no cloud object store, no LLM. That is not the
-            same as air-gapped. For on-device conversion, clone the repo and use{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">python cli.py process</code> or{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">streamlit run app_local.py</code>.
-          </AlertDescription>
-        </Alert>
-      </section>
-
       <section className="border-t bg-muted/30">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-12 md:py-16">
           <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">The Problem</h2>
@@ -132,7 +138,7 @@ export function Marketing() {
       </section>
 
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-12 md:py-16">
-        <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">How scapeTableau Solves It</h2>
+        <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">How BIEscape Solves It</h2>
         <div className="hidden md:block">
           <Table>
             <TableHeader>
@@ -174,8 +180,11 @@ export function Marketing() {
                   📊 Excel extract
                 </CardTitle>
                 <CardDescription>
-                  One upload fills the Extract Data tab. Packaged tabular files become an .xlsx. Hyper stays listed, not
-                  converted on Vercel.
+                  Packaged tabular files become an .xlsx.{" "}
+                  <Link href="/twbx-to-excel" className="underline underline-offset-4">
+                    TWBX to Excel
+                  </Link>
+                  . Hyper stays listed, not converted.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -186,7 +195,11 @@ export function Marketing() {
                   🔍 Workbook inspector
                 </CardTitle>
                 <CardDescription>
-                  Schema, parameters, hidden fields, and dashboard wireframes you can Print to PDF — passwords redacted.
+                  Schema, parameters, hidden fields, and{" "}
+                  <Link href="/twbx-to-pdf" className="underline underline-offset-4">
+                    dashboard wireframes you can Print to PDF
+                  </Link>{" "}
+                  — passwords redacted.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -196,11 +209,17 @@ export function Marketing() {
                   <Terminal className="size-4" />
                   💻 Local CLI
                 </CardTitle>
-                <CardDescription>Clone the repo. There is no PyPI package named scapetableau.</CardDescription>
+                <CardDescription>
+                  <a href={GITHUB_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                    Clone the repo
+                  </a>
+                  . There is no PyPI package named scapetableau.
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <pre className="overflow-x-auto rounded-lg bg-background p-3 font-mono text-xs leading-relaxed">
-                  {`pip install -r requirements.txt
+                  {`git clone ${GITHUB_URL}.git
+pip install -r requirements.txt
 python cli.py process sales_report.twbx --output-dir ./models`}
                 </pre>
               </CardContent>
@@ -220,32 +239,7 @@ python cli.py process sales_report.twbx --output-dir ./models`}
         </pre>
       </section>
 
-      <footer className="border-t bg-muted/30">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-12 md:py-16">
-          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">
-            Ready to leave the workbook black box?
-          </h2>
-          <p className="max-w-2xl text-muted-foreground">
-            Try the hosted converter, or run the same engine locally. MIT licensed.
-          </p>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <a href={WEB_APP_URL} className={cn(buttonVariants({ size: "lg" }))}>
-              🚀 Try the Web App
-            </a>
-            <a
-              href={GITHUB_URL}
-              target="_blank"
-              rel="noreferrer"
-              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
-            >
-              ⭐ Star the Repo
-            </a>
-          </div>
-          <p className="font-mono text-xs text-muted-foreground">
-            pip install -r requirements.txt && python cli.py process sales_report.twbx --output-dir ./models
-          </p>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

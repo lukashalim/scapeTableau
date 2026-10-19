@@ -1,8 +1,8 @@
-# scapeTableau
+# BIEscape
 
 Instantly Extract & Transpile Tableau Calculated Fields into Clean ANSI SQL & dbt Models.
 
-scapeTableau is a zero-dependency, pure-Python engine designed to automate the painful process of migrating legacy Tableau workbooks (.twb and .twbx) into modern cloud data stacks (Snowflake, BigQuery, Postgres, DuckDB, and dbt).
+BIEscape (source: lukashalim/scapeTableau) is a zero-dependency, pure-Python engine designed to automate the painful process of migrating legacy Tableau workbooks (.twb and .twbx) into modern cloud data stacks (Snowflake, BigQuery, Postgres, DuckDB, and dbt). Live site: https://www.biescape.com.
 
 Parsing and transpilation execute 100% in-memory. Your files are never persisted to disk, uploaded to cloud storage, or sent to external LLM APIs—making it fully compliant with strict corporate data privacy policies.
 
@@ -71,7 +71,7 @@ pip install -r requirements.txt
 
 ### 1. Python API
 
-Use scapeTableau directly within your Python scripts or data pipelines:
+Use BIEscape directly within your Python scripts or data pipelines:
 
 ```python
 from engine import transpile

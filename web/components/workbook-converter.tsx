@@ -102,7 +102,7 @@ function ExtractPanel({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "scapetableau-extract.xlsx";
+      a.download = "biescape-extract.xlsx";
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -127,7 +127,7 @@ function ExtractPanel({
           <AlertTitle>No packaged tables</AlertTitle>
           <AlertDescription>
             This is a plain .twb (or the sample workbook). Custom SQL still appears below. Pack a .twbx with CSV/TSV/XLS/XLSX
-            to convert those files into a downloadable workbook. Hyper files are never converted on Vercel.
+            to convert those files into a downloadable workbook. .hyper extracts are listed but not converted.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -135,8 +135,7 @@ function ExtractPanel({
         <Alert>
           <AlertTitle>Hyper-only package</AlertTitle>
           <AlertDescription>
-            Embedded .hyper extracts are listed for raw download locally. Excel conversion of Hyper is not available on
-            this web engine.
+            .hyper extracts are listed but not converted. Excel conversion of Hyper is not available on this web engine.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -337,7 +336,11 @@ function InspectPanel({ result }: { result: TranspileResult }) {
   );
 }
 
-export function WorkbookConverter() {
+interface WorkbookConverterProps {
+  embedded?: boolean;
+}
+
+export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<File | null>(null);
   const { resolvedTheme } = useTheme();
@@ -446,15 +449,22 @@ export function WorkbookConverter() {
   const okCount = result?.calculated_fields.filter((f) => f.status === "ok").length ?? 0;
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 md:py-16">
-      <header className="max-w-3xl space-y-2">
-        <h2 className="font-heading text-2xl font-semibold tracking-tight">Convert a workbook</h2>
-        <p className="text-sm text-muted-foreground">
-          Drop a <span className="font-medium text-foreground">.twb</span> or{" "}
-          <span className="font-medium text-foreground">.twbx</span>. One pass transpiles SQL, extracts packaged
-          tables, and inspects schema.
-        </p>
-      </header>
+    <div
+      className={cn(
+        "mx-auto flex w-full max-w-6xl flex-col gap-8 px-4",
+        embedded ? "pb-10 pt-6 md:pb-16 md:pt-8" : "py-10 md:py-16",
+      )}
+    >
+      {embedded ? null : (
+        <header className="max-w-3xl space-y-2">
+          <h2 className="font-heading text-2xl font-semibold tracking-tight">Convert a workbook</h2>
+          <p className="text-sm text-muted-foreground">
+            Drop a <span className="font-medium text-foreground">.twb</span> or{" "}
+            <span className="font-medium text-foreground">.twbx</span>. One pass transpiles SQL, extracts packaged
+            tables, and inspects schema.
+          </p>
+        </header>
+      )}
 
       <Card>
         <CardHeader>
@@ -486,7 +496,9 @@ export function WorkbookConverter() {
             )}
             <div className="space-y-1">
               <p className="font-medium">Drop a .twb or .twbx here</p>
-              <p className="text-sm text-muted-foreground">or click to browse. Files are not persisted.</p>
+              <p className="text-sm text-muted-foreground">
+                or click to browse. Files are not persisted. .hyper extracts are listed but not converted.
+              </p>
             </div>
           </label>
           <input
@@ -674,6 +686,17 @@ export function WorkbookConverter() {
 
       <Separator />
       <footer className="space-y-2 pb-8 text-sm text-muted-foreground">
+        <p>
+          Clone the repo:{" "}
+          <a
+            href="https://github.com/lukashalim/scapeTableau"
+            className="underline underline-offset-4"
+            target="_blank"
+            rel="noreferrer"
+          >
+            https://github.com/lukashalim/scapeTableau
+          </a>
+        </p>
         <p>
           CLI:{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">

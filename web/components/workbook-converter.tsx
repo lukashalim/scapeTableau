@@ -12,7 +12,6 @@ import {
   Loader2,
   Printer,
   Search,
-  ShieldCheck,
   Sparkles,
   Table2,
   Upload,
@@ -448,27 +447,13 @@ export function WorkbookConverter() {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 md:py-16">
-      <header className="flex flex-col gap-6">
-        <div className="max-w-3xl space-y-4">
-          <h1 className="font-heading text-4xl font-semibold tracking-tight md:text-5xl">
-            Tableau formulas to ANSI SQL
-          </h1>
-          <p className="text-lg text-muted-foreground md:text-xl">
-            Drop a <span className="font-medium text-foreground">.twb</span> or{" "}
-            <span className="font-medium text-foreground">.twbx</span>. Calculated fields become warehouse-ready SQL —
-            then extract tables and inspect schema. Parsed in memory, never written to disk.
-          </p>
-        </div>
-        <Alert className="max-w-3xl border-emerald-500/30 bg-emerald-500/5">
-          <ShieldCheck className="text-emerald-600 dark:text-emerald-400" />
-          <AlertTitle>Workbooks never leave this process</AlertTitle>
-          <AlertDescription>
-            The browser posts the file to a local Python CLI over stdin. Nothing is stored. For air-gapped conversion,
-            skip this UI and use{" "}
-            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">python cli.py process</code> — full
-            details are in the repository README.
-          </AlertDescription>
-        </Alert>
+      <header className="max-w-3xl space-y-2">
+        <h2 className="font-heading text-2xl font-semibold tracking-tight">Convert a workbook</h2>
+        <p className="text-sm text-muted-foreground">
+          Drop a <span className="font-medium text-foreground">.twb</span> or{" "}
+          <span className="font-medium text-foreground">.twbx</span>. One pass transpiles SQL, extracts packaged
+          tables, and inspects schema.
+        </p>
       </header>
 
       <Card>

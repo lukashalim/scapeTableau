@@ -1,0 +1,251 @@
+import { FileSpreadsheet, Search, ShieldCheck, Terminal } from "lucide-react";
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+
+const GITHUB_URL = "https://github.com/lukashalim/scapeTableau";
+const WEB_APP_URL = "https://scapetableau-botsbridge.vercel.app";
+
+interface FeatureRow {
+  feature: string;
+  ships: string;
+}
+
+const FEATURES: FeatureRow[] = [
+  {
+    feature: "In-memory workbook parse",
+    ships:
+      "Reads .twb / .twbx in process memory with stdlib xml.etree + zipfile. Hosted uploads are not written to disk and are not sent to an LLM.",
+  },
+  {
+    feature: "Formula transpilation",
+    ships:
+      "IIF / ZN / IFNULL / CONTAINS / STARTSWITH (plus IF/CASE, LEN, TRIM, UPPER/LOWER, ABS, ROUND) become CASE / COALESCE / LIKE and ANSI SQL. LOD FIXED / INCLUDE / EXCLUDE stay isolated as -- TODO: Review LOD logic comments — they are not rewritten as SQL.",
+  },
+  {
+    feature: "dbt-ready SQL views",
+    ships:
+      "Emits CREATE VIEW SQL with comments you can drop into a dbt model file. schema.yml is not auto-written; this is not a full dbt package scaffold.",
+  },
+  {
+    feature: "Extract Data",
+    ships:
+      "Packaged CSV / TSV / XLS / XLSX become a downloadable .xlsx. Custom SQL is copied to extra sheets, not executed. Hyper extracts are listed only.",
+  },
+  {
+    feature: "Inspect Schema",
+    ships:
+      "Datasources, all columns (including hidden), parameters, redacted connections, and printable dashboard wireframes.",
+  },
+  {
+    feature: "Air-gapped local run",
+    ships:
+      "CLI and Streamlit stay on-device. This hosted app is in-memory and non-persistent — it is not air-gapped.",
+  },
+];
+
+const ARCHITECTURE = `                       [ .twb / .twbx bytes ]
+                                 │
+                                 ▼
+                     ┌──────────────────────┐
+                     │    engine/parser.py  │ (xml.etree + zipfile)
+                     └───────────┬──────────┘
+                                 │
+                                 ▼
+                     ┌──────────────────────┐
+                     │    engine/schema.py  │ (Pydantic v2 Models)
+                     └───────────┬──────────┘
+                                 │
+                                 ▼
+          ┌──────────────────────┼──────────────────────┐
+          ▼                      ▼                      ▼
+ engine/transpiler.py     engine/extract.py      engine/inspect.py
+          │                      │                      │
+          └──────────┬───────────┴──────────┬───────────┘
+                     ▼                      ▼
+              TranspileResult         xlsx bytes
+          (calculated_fields, sql_script,
+           inspect, extract_inventory, dashboards)
+                     │
+            ┌────────┼────────┐
+            ▼        ▼        ▼
+       [ cli.py ] [ app_local.py ] [ /api/transpile + /api/extract ]`;
+
+export function Marketing() {
+  return (
+    <div className="flex flex-col">
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-20">
+        <div className="max-w-3xl space-y-5">
+          <h1 className="font-heading text-4xl font-semibold tracking-tight text-balance md:text-5xl">
+            Instantly Extract &amp; Transpile Tableau Calculated Fields into Clean ANSI SQL &amp; dbt Models.
+          </h1>
+          <p className="text-lg text-muted-foreground md:text-xl">
+            scapeTableau is a zero-dependency, pure-Python engine for migrating legacy Tableau workbooks (
+            <span className="font-medium text-foreground">.twb</span> and{" "}
+            <span className="font-medium text-foreground">.twbx</span>) into warehouse SQL for Snowflake, BigQuery,
+            Postgres, DuckDB, and dbt.
+          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <a href="#converter" className={cn(buttonVariants({ size: "lg" }))}>
+              🚀 Launch Web App
+            </a>
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+            >
+              ⭐ View on GitHub
+            </a>
+          </div>
+        </div>
+        <Alert className="max-w-3xl border-emerald-500/30 bg-emerald-500/5">
+          <ShieldCheck className="text-emerald-600 dark:text-emerald-400" />
+          <AlertTitle>In-memory on this site. Air-gapped on your machine.</AlertTitle>
+          <AlertDescription>
+            Hosted conversion stays in process memory: no disk persist, no cloud object store, no LLM. That is not the
+            same as air-gapped. For on-device conversion, clone the repo and use{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">python cli.py process</code> or{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">streamlit run app_local.py</code>.
+          </AlertDescription>
+        </Alert>
+      </section>
+
+      <section className="border-t bg-muted/30">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-12 md:py-16">
+          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">The Problem</h2>
+          <div className="max-w-3xl space-y-4 text-muted-foreground">
+            <p>
+              Tableau workbooks are XML (or a zip of XML plus extracts). Calculated fields hide inside proprietary
+              syntax — IIF, ZN, IFNULL, LODs — that warehouses do not run. Rebuilding those formulas by hand is slow,
+              and packaged tables plus hidden columns stay buried unless you unzip the file yourself.
+            </p>
+            <p>
+              Offloading the workbook to a generic LLM is a privacy non-starter for most corporate audits. You need a
+              deterministic parser you can run locally, plus a hosted try-it path that does not keep the file.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-12 md:py-16">
+        <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">How scapeTableau Solves It</h2>
+        <div className="hidden md:block">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-1/4">Capability</TableHead>
+                <TableHead>What actually ships</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {FEATURES.map((row) => (
+                <TableRow key={row.feature}>
+                  <TableCell className="align-top font-medium whitespace-normal">{row.feature}</TableCell>
+                  <TableCell className="whitespace-normal text-muted-foreground">{row.ships}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+        <div className="grid gap-3 md:hidden">
+          {FEATURES.map((row) => (
+            <Card key={row.feature} size="sm">
+              <CardHeader>
+                <CardTitle>{row.feature}</CardTitle>
+                <CardDescription>{row.ships}</CardDescription>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      <section className="border-t bg-muted/30">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-12 md:py-16">
+          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Free Utilities</h2>
+          <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileSpreadsheet className="size-4" />
+                  📊 Excel extract
+                </CardTitle>
+                <CardDescription>
+                  One upload fills the Extract Data tab. Packaged tabular files become an .xlsx. Hyper stays listed, not
+                  converted on Vercel.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Search className="size-4" />
+                  🔍 Workbook inspector
+                </CardTitle>
+                <CardDescription>
+                  Schema, parameters, hidden fields, and dashboard wireframes you can Print to PDF — passwords redacted.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Terminal className="size-4" />
+                  💻 Local CLI
+                </CardTitle>
+                <CardDescription>Clone the repo. There is no PyPI package named scapetableau.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <pre className="overflow-x-auto rounded-lg bg-background p-3 font-mono text-xs leading-relaxed">
+                  {`pip install -r requirements.txt
+python cli.py process sales_report.twbx --output-dir ./models`}
+                </pre>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-12 md:py-16">
+        <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Architecture &amp; Security</h2>
+        <p className="max-w-3xl text-muted-foreground">
+          Python is the source of truth. The Next.js routes stream the upload to the engine and return JSON or xlsx.
+          Nothing is stored after the response.
+        </p>
+        <pre className="overflow-x-auto rounded-xl border bg-muted/40 p-4 font-mono text-[11px] leading-snug md:text-xs">
+          {ARCHITECTURE}
+        </pre>
+      </section>
+
+      <footer className="border-t bg-muted/30">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-12 md:py-16">
+          <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">
+            Ready to leave the workbook black box?
+          </h2>
+          <p className="max-w-2xl text-muted-foreground">
+            Try the hosted converter, or run the same engine locally. MIT licensed.
+          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <a href={WEB_APP_URL} className={cn(buttonVariants({ size: "lg" }))}>
+              🚀 Try the Web App
+            </a>
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
+            >
+              ⭐ Star the Repo
+            </a>
+          </div>
+          <p className="font-mono text-xs text-muted-foreground">
+            pip install -r requirements.txt && python cli.py process sales_report.twbx --output-dir ./models
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+}

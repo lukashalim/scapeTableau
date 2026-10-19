@@ -18,9 +18,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EscapeTableau — Tableau formulas to ANSI SQL",
+  title: "scapeTableau — Tableau calculated fields to ANSI SQL & dbt models",
   description:
-    "Drop a Tableau .twb or .twbx. Transpile calculated fields to ANSI SQL, extract packaged tables, and inspect schema in memory.",
+    "Instantly extract and transpile Tableau calculated fields into clean ANSI SQL and dbt-ready model files. In-memory hosted conversion; air-gapped CLI and Streamlit on your machine.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -33,7 +33,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col font-sans">
         <ThemeProvider>
           <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b bg-background/90 px-4 py-3 backdrop-blur md:px-8">
-            <p className="font-medium tracking-tight">EscapeTableau</p>
+            <p className="font-medium tracking-tight">scapeTableau</p>
             <ThemeToggle />
           </header>
           {children}

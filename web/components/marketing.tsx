@@ -3,11 +3,9 @@ import Link from "next/link";
 
 import { SiteFooter } from "@/components/site-footer";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { GITHUB_URL } from "@/lib/site";
-import { cn } from "@/lib/utils";
 
 interface FeatureRow {
   feature: string;
@@ -86,20 +84,14 @@ export function MarketingHero() {
           warehouses, or dbt. It does not emit PBIX, LookML, or QuickSight assets. .hyper extracts are listed but not
           converted.
         </p>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <a href="#converter" className={cn(buttonVariants({ size: "lg" }))}>
-            🚀 Launch Web App
-          </a>
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
-          >
-            Clone the repo
-          </a>
-        </div>
       </div>
+    </section>
+  );
+}
+
+export function MarketingPrivacyNote() {
+  return (
+    <section className="mx-auto flex w-full max-w-6xl flex-col px-4 pb-10 md:pb-16">
       <Alert className="max-w-3xl border-emerald-500/30 bg-emerald-500/5">
         <ShieldCheck className="text-emerald-600 dark:text-emerald-400" />
         <AlertTitle>In-memory on this site. Air-gapped on your machine.</AlertTitle>

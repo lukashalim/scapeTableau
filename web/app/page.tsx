@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { MarketingBelow, MarketingHero } from "@/components/marketing";
+import { MarketingBelow, MarketingHero, MarketingPrivacyNote } from "@/components/marketing";
 import { WorkbookConverter } from "@/components/workbook-converter";
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, SITE_URL } from "@/lib/site";
 
@@ -27,6 +27,7 @@ export default function HomePage() {
       <div id="converter" className="scroll-mt-20">
         <WorkbookConverter embedded />
       </div>
+      <MarketingPrivacyNote />
       <MarketingBelow />
     </>
   );

@@ -1,7 +1,9 @@
 export const SITE_URL = "https://www.biescape.com";
 export const SITE_NAME = "BIEscape";
 export const GITHUB_URL = "https://github.com/lukashalim/scapeTableau";
-export const DESKTOP_RELEASE_URL = `${GITHUB_URL}/releases/latest`;
+/** Direct Windows installer download (GitHub Releases latest asset). */
+export const DESKTOP_RELEASE_URL = `${GITHUB_URL}/releases/latest/download/BIEscape-Converter-Setup-windows-x64.exe`;
+export const DESKTOP_RELEASES_PAGE = `${GITHUB_URL}/releases/latest`;
 
 export interface FaqItem {
   question: string;
@@ -80,7 +82,7 @@ export const LANDING_PAGES: LandingPage[] = [
       {
         question: "Are .hyper extracts converted?",
         answer:
-          "Not in the browser. Download BIEscape Converter from https://github.com/lukashalim/scapeTableau/releases/latest (Windows x64 and macOS arm64 zips). Unsigned v1 may trigger Gatekeeper or SmartScreen — Open anyway.",
+          "Not in the browser. Download the Windows installer (BIEscape-Converter-Setup-windows-x64.exe) from GitHub Releases, or the macOS zip. Unsigned v1 may trigger SmartScreen / Gatekeeper — Run anyway / Open.",
       },
       {
         question: "Does Custom SQL run?",

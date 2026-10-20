@@ -25,7 +25,7 @@ export function SiteFooter() {
             rel="noreferrer"
             className={cn(buttonVariants({ size: "lg" }))}
           >
-            Download desktop converter
+            Download Windows installer
           </a>
           <a
             href={GITHUB_URL}

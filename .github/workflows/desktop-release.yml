@@ -9,16 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2022
-            artifact: BIEscape-Converter-windows-x64
-          - os: macos-14
-            artifact: BIEscape-Converter-macos-arm64
-    runs-on: ${{ matrix.os }}
+  build-windows:
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -35,25 +27,56 @@ jobs:
       - name: Build onedir
         run: pyinstaller desktop/biescape_converter.spec --noconfirm --clean
 
-      - name: Zip (Windows)
-        if: runner.os == 'Windows'
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Sync installer version from tag
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/BIEscape-Converter/* -DestinationPath ${{ matrix.artifact }}.zip
+          $ver = "${{ github.ref_name }}".Replace("desktop-v", "")
+          $iss = "desktop/installer.iss"
+          (Get-Content $iss) -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$ver`"" | Set-Content $iss
 
-      - name: Zip (macOS)
-        if: runner.os == 'macOS'
+      - name: Compile Windows installer
+        shell: cmd
+        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" desktop\installer.iss'
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: BIEscape-Converter-Setup-windows-x64
+          path: dist-installer/BIEscape-Converter-Setup-windows-x64.exe
+
+  build-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install tableauhyperapi pyinstaller
+
+      - name: Build onedir
+        run: pyinstaller desktop/biescape_converter.spec --noconfirm --clean
+
+      - name: Zip macOS app
         run: |
           cd dist
-          zip -r "../${{ matrix.artifact }}.zip" BIEscape-Converter
+          zip -r ../BIEscape-Converter-macos-arm64.zip BIEscape-Converter
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.zip
+          name: BIEscape-Converter-macos-arm64
+          path: BIEscape-Converter-macos-arm64.zip
 
   release:
-    needs: build
+    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,11 +85,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect zips
+      - name: Collect release assets
         run: |
           mkdir -p release-assets
-          find artifacts -name '*.zip' -exec cp {} release-assets/ \;
-          ls -la release-assets
+          find artifacts -type f \( -name '*.exe' -o -name '*.zip' \) -exec cp {} release-assets/ \;
+          ls -lah release-assets
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -75,8 +98,12 @@ jobs:
           body: |
             Unsigned desktop builds of **BIEscape Converter** (Hyper / TWBX / TDSX → Excel).
 
-            - Windows: unzip and run `BIEscape-Converter.exe`. SmartScreen may warn — More info → Run anyway.
-            - macOS: unzip and open the app. Gatekeeper may warn — right-click → Open.
+            ### Windows (recommended)
+            Download **[BIEscape-Converter-Setup-windows-x64.exe](https://github.com/lukashalim/scapeTableau/releases/latest/download/BIEscape-Converter-Setup-windows-x64.exe)** and run the installer.
+            SmartScreen may warn — **More info → Run anyway**.
+
+            ### macOS
+            Download the arm64 zip, unzip, then open the app (Gatekeeper: right-click → **Open**).
 
             Bundle includes Tableau `hyperd` (~300MB). Hosted biescape.com stays list-only for Hyper.
           files: release-assets/*

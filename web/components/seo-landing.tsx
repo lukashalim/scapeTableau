@@ -31,7 +31,7 @@ export function SeoLanding({ page }: SeoLandingProps) {
                 rel="noreferrer"
                 className={cn(buttonVariants({ size: "lg" }))}
               >
-                Download desktop converter
+                Download Windows installer (.exe)
               </a>
             ) : null}
             <a

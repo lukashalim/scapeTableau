@@ -140,18 +140,26 @@ function ExtractPanel({
             <p>
               Hyper extracts need the Tableau Hyper engine and can&apos;t be converted in the browser.
             </p>
-            <p>Download the free desktop converter to turn this into Excel on your computer.</p>
+            <p>Download the free Windows installer to turn this into Excel on your computer.</p>
             <a
               href={DESKTOP_RELEASE_URL}
-              target="_blank"
-              rel="noreferrer"
               className={cn(buttonVariants({ variant: "default" }), "inline-flex")}
             >
               <Download data-icon="inline-start" />
-              Download BIEscape Converter
+              Download Windows installer (.exe)
             </a>
             <p className="text-xs text-muted-foreground">
-              Unsigned Windows / macOS zips (~300MB with hyperd). Gatekeeper / SmartScreen may warn — Open anyway.
+              Direct .exe download (~300MB with hyperd). Unsigned — SmartScreen may warn (More info → Run anyway).
+              macOS zip is on the{" "}
+              <a
+                href="https://github.com/lukashalim/scapeTableau/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-4"
+              >
+                Releases page
+              </a>
+              .
             </p>
           </AlertDescription>
         </Alert>
@@ -525,15 +533,13 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
             <div className="space-y-1">
               <p className="font-medium">Drop a .twb or .twbx here</p>
               <p className="text-sm text-muted-foreground">
-                or click to browse. Files are not persisted. For Hyper → Excel,{" "}
+                or click to browse. Files are not persisted.                 For Hyper → Excel,{" "}
                 <a
                   href={DESKTOP_RELEASE_URL}
-                  target="_blank"
-                  rel="noreferrer"
                   className="underline underline-offset-4"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  download the desktop converter
+                  download the Windows installer (.exe)
                 </a>
                 .
               </p>

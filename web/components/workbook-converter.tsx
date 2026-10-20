@@ -135,7 +135,8 @@ function ExtractPanel({
         <Alert>
           <AlertTitle>Hyper-only package</AlertTitle>
           <AlertDescription>
-            .hyper extracts are listed but not converted. Excel conversion of Hyper is not available on this web engine.
+            .hyper extracts are listed but not converted here. Excel conversion of Hyper needs local tableauhyperapi
+            (hyperd) and is not available on this web engine or Vercel.
           </AlertDescription>
         </Alert>
       ) : null}

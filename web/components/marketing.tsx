@@ -31,7 +31,7 @@ const FEATURES: FeatureRow[] = [
   {
     feature: "Extract Data",
     ships:
-      "Packaged CSV / TSV / XLS / XLSX become a downloadable .xlsx. Custom SQL is copied to extra sheets, not executed. Hyper extracts are listed but not converted.",
+      "Packaged CSV / TSV / XLS / XLSX become a downloadable .xlsx. Custom SQL is copied to extra sheets, not executed. Hyper extracts are listed only on the hosted site (convert locally with optional tableauhyperapi).",
   },
   {
     feature: "Inspect Schema",

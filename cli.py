@@ -205,13 +205,18 @@ def extract_cmd(
     ),
 ) -> None:
     try:
-        xlsx, _inventory = extract_to_xlsx(_read_source(path))
+        xlsx, inventory = extract_to_xlsx(_read_source(path))
     except WorkbookParseError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
     except Exception as exc:  # pragma: no cover
         typer.secho(f"Extract failed: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
+
+    if inventory.hyper_files:
+        for note in inventory.notes:
+            if "Hyper" in note or "hyper" in note:
+                typer.secho(note, fg=typer.colors.YELLOW, err=True)
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)

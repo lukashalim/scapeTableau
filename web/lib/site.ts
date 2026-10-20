@@ -78,7 +78,7 @@ export const LANDING_PAGES: LandingPage[] = [
       {
         question: "Are .hyper extracts converted?",
         answer:
-          "No. Hyper files are listed so you can see they exist. Excel conversion of Hyper is not available on the hosted engine.",
+          "Not on this site or on Vercel — Hyper needs Tableau's hyperd process, which is too large for serverless. Files are listed so you can see they exist. The open-source CLI/Streamlit app can convert locally if you install optional tableauhyperapi.",
       },
       {
         question: "Does Custom SQL run?",

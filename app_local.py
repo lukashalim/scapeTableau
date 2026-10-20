@@ -134,7 +134,18 @@ with extract_tab:
         else:
             st.info("Plain .twb — no packaged CSV/XLSX. Custom SQL is still exported as a sheet.")
         if inv.hyper_files:
-            st.warning("Hyper files are listed, not converted. tableauhyperapi is optional and is not used on Vercel.")
+            from engine.hyper import hyper_conversion_enabled
+
+            if hyper_conversion_enabled():
+                st.info(
+                    "Hyper extracts convert locally via optional tableauhyperapi "
+                    "(temp file for hyperd, deleted after read; 100k row cap). Not used on Vercel."
+                )
+            else:
+                st.warning(
+                    "Hyper files are listed only here. "
+                    "pip install tableauhyperapi to convert locally (skipped when VERCEL is set)."
+                )
         xlsx, _ = extract_to_xlsx(payload)
         st.download_button(
             "Download .xlsx",

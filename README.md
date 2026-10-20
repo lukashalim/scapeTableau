@@ -12,7 +12,7 @@ Parsing and transpilation execute 100% in-memory. Your files are never persisted
 - **Zero-Dependency Python Engine:** Built entirely on standard Python utilities (`xml.etree` and `zipfile`). Fast, lightweight, and deterministic.
 - **Smart AST Formula Transpilation:** Recursively transpiles Tableau-specific syntax (`IIF`, `ZN`, `IFNULL`, `STARTSWITH`, `CONTAINS`, `CASE`) into ANSI SQL and DAX.
 - **LOD SQL:** `FIXED` / `INCLUDE` / `EXCLUDE` become window functions or grain subqueries (INCLUDE/EXCLUDE use worksheet row/column grain). DAX LOD stays `// TODO: Review LOD logic`.
-- **Extract Data:** Packaged CSV/TSV/XLS/XLSX inside a `.twbx` become a downloadable `.xlsx` (via `openpyxl`). Custom SQL is copied to extra sheets and is not executed. Hyper extracts are listed only — they are not converted on Vercel.
+- **Extract Data:** Packaged CSV/TSV/XLS/XLSX inside a `.twbx` become a downloadable `.xlsx` (via `openpyxl`). Custom SQL is copied to extra sheets and is not executed. On the hosted site / Vercel, `.hyper` extracts are listed only (hyperd is too large for serverless). Local CLI/Streamlit can convert Hyper via optional `tableauhyperapi` (not in `requirements.txt`; skipped when `VERCEL` is set).
 - **Inspect Schema:** Datasources, all columns (including hidden), Parameters, connections (passwords redacted), and dashboard wireframes you can Print to PDF.
 - **Multi-Interface Support:** Run it as a CLI tool, an offline Streamlit GUI, or a Next.js web application.
 
@@ -65,7 +65,7 @@ cd scapeTableau
 pip install -r requirements.txt
 ```
 
-`openpyxl` is required for Excel extract. `tableauhyperapi` is optional and never required; Hyper files stay listed, not converted, so uploads are never written to disk.
+`openpyxl` is required for Excel extract. `tableauhyperapi` is an optional extra for local Hyper→Excel (`pip install tableauhyperapi`); it is never required and is not used when `VERCEL` is set. Hosted uploads stay list-only for `.hyper`.
 
 ## Usage
 
@@ -150,7 +150,7 @@ For non-technical users or local air-gapped environments without web access:
 streamlit run app_local.py
 ```
 
-Workspace tabs: **Transpile to SQL/dbt**, **Extract Data**, **Inspect Schema**. Green "Local Offline Mode" status badge, sidebar SQL dialects, and download buttons. Hyper Excel conversion is not performed (uploads stay in memory).
+Workspace tabs: **Transpile to SQL/dbt**, **Extract Data**, **Inspect Schema**. Green "Local Offline Mode" status badge, sidebar SQL dialects, and download buttons. With optional `tableauhyperapi`, Hyper extracts convert via a temp file for hyperd (deleted after read); without it they are listed only.
 
 ### 4. Next.js Web App
 

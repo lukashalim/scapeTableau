@@ -296,9 +296,50 @@ def test_csv_to_xlsx_and_hyper_listed_not_converted() -> None:
         joined = " ".join(str(c) for row in rows for c in row)
         assert "sales.hyper" in joined
         assert "HYPERFAKE" not in joined
+        assert "Listed only" in joined
     finally:
         book2.close()
     assert all("sales.hyper" != sheet for sheet in inv2.converted_sheets)
+
+
+def test_tiny_hyper_converts_locally_skipped_on_vercel(monkeypatch: pytest.MonkeyPatch) -> None:
+    from openpyxl import load_workbook
+
+    from engine.extract import extract_to_xlsx
+    from engine.hyper import hyper_conversion_enabled
+
+    hyper_path = ROOT / "samples" / "tiny_extract.hyper"
+    assert hyper_path.is_file()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("packaged.twb", SAMPLE.read_bytes())
+        zf.writestr("Data/Extracts/tiny_extract.hyper", hyper_path.read_bytes())
+    payload = buf.getvalue()
+
+    monkeypatch.delenv("VERCEL", raising=False)
+    if hyper_conversion_enabled():
+        xlsx, inv = extract_to_xlsx(payload)
+        assert any("tiny_extract_Extract_Extract" == s for s in inv.converted_sheets)
+        book = load_workbook(io.BytesIO(xlsx), read_only=True)
+        try:
+            rows = list(book["tiny_extract_Extract_Extract"].iter_rows(values_only=True))
+            assert rows[0][:2] == ("Region", "Sales")
+            regions = {row[0] for row in rows[1:]}
+            assert regions == {"West", "East"}
+        finally:
+            book.close()
+        assert any("converted locally" in n.lower() for n in inv.notes)
+
+    monkeypatch.setenv("VERCEL", "1")
+    xlsx_v, inv_v = extract_to_xlsx(payload)
+    assert all("tiny_extract_Extract_Extract" != s for s in inv_v.converted_sheets)
+    assert any("Vercel" in n or "listed only" in n.lower() for n in inv_v.notes)
+    book_v = load_workbook(io.BytesIO(xlsx_v), read_only=True)
+    try:
+        assert "Hyper files" in book_v.sheetnames
+        assert "tiny_extract_Extract_Extract" not in book_v.sheetnames
+    finally:
+        book_v.close()
 
 
 def test_password_redaction_connect_string() -> None:

@@ -131,7 +131,7 @@ def build_dax_script(
         lines.append("// (none)")
     else:
         for info in params:
-            lines.append(f"[{param_measure_name(info.caption)}] = {param_dax_literal(info)}")
+            lines.append(f"[{param_measure_name(info.caption)}] := {param_dax_literal(info)}")
         lines.append("")
 
     def _emit_section(title: str, group: list[CalculatedField], *, kind: str) -> None:

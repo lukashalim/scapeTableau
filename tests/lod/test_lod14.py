@@ -71,7 +71,7 @@ def test_lod14_fourteen_calcs() -> None:
         assert field.dax_kind == kind, f"{caption} kind {field.dax_kind} != {kind}"
         assert "// TODO" not in (field.dax or "")
         assert "-- TODO" not in (field.sql or "")
-    assert "[Multiplier Value] = 2" in result.dax_script
+    assert "[Multiplier Value] := 2" in result.dax_script
     assert "[Pct of Total] :=" in result.dax_script
     assert "Orders[First Purchase Date] =" in result.dax_script
     assert "/* [Parameters]" not in result.dax_script
@@ -98,17 +98,28 @@ def test_fixed_none_sql_uncorrelated() -> None:
 
 
 def test_nested_fixed_sql_correlates_own_dims() -> None:
+    """Nested FIXED AVG is one value per customer (matches DAX VALUES), not row-weighted.
+
+    Tableau can row-weight AVG when the inner LOD is repeated on fact rows.
+    EscapeTableau intentionally densifies: SQL GROUP BY Customer Name then AVG,
+    DAX AVERAGEX(VALUES(Customer Name), CALCULATE(SUM, ALLEXCEPT(Customer Name))).
+    """
+
     ctx = FormulaContext(dialect="duckdb", view_dims=["Region"], source_table="Orders")
-    sql, status, err = transpile_formula(
-        "{FIXED [Region]: AVG({FIXED [Customer Name]: SUM([Sales])})}",
-        dialect="duckdb",
-        context=ctx,
-    )
+    formula = "{FIXED [Region]: AVG({FIXED [Customer Name]: SUM([Sales])})}"
+    sql, status, err = transpile_formula(formula, dialect="duckdb", context=ctx)
     assert status == ParseStatus.ok, err
     assert '"Customer Name"' in sql
     assert "IN (SELECT" in sql
     assert 'GROUP BY _lod."Customer Name"' in sql
     assert '_lod."Region" = "Orders"."Region"' not in sql
+    assert "AVG(lod_inner)" in sql
+    dax, dax_status, dax_err = transpile_formula(formula, target="dax")
+    assert dax_status == ParseStatus.ok, dax_err
+    assert "AVERAGEX(VALUES(Orders[Customer Name])" in dax
+    assert "ALLEXCEPT(Orders, Orders[Customer Name])" in dax
+    # Not a row-weighted window over fact rows
+    assert "OVER (" not in sql
 
 
 def test_exclude_and_fixed_none_dax_formula() -> None:

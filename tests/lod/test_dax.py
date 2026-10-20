@@ -73,8 +73,10 @@ def test_all_lod_calcs_dax_exact() -> None:
     assert "// Calculated columns" in result.dax_script
     assert "[Fixed Region Sales] :=" in result.dax_script
     assert "Orders[Next Month] =" in result.dax_script
-    assert "[Multiplier Value] = 2" in result.dax_script
+    assert "[Multiplier Value] := 2" in result.dax_script
+    assert "[Multiplier Value] = 2" not in result.dax_script
     assert "/* [Parameters].[Multiplier] */" not in result.dax_script
+    assert "/* [Parameters]" not in (fields["Scaled Sales"].dax or "")
     assert "DATEADD(Orders[Order Date], 1, MONTH)" not in (fields["Next Month"].dax or "")
 
 

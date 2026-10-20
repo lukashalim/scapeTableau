@@ -99,6 +99,20 @@ def test_dateadd_month_emits_edate() -> None:
     assert dax == "EDATE(Orders[Order Date], 1)"
 
 
+def test_sql_param_is_bare_literal() -> None:
+    from engine.transpiler import FormulaContext
+    from engine.schema import ParameterInfo
+
+    ctx = FormulaContext(
+        dialect="duckdb",
+        parameters={"Multiplier": ParameterInfo(name="[Multiplier]", caption="Multiplier", datatype="real", value="2")},
+    )
+    sql, status, err = transpile_formula("[Sales] * [Parameters].[Multiplier]", dialect="duckdb", context=ctx)
+    assert status == ParseStatus.ok, err
+    assert sql == '"Sales" * 2'
+    assert "/*" not in sql
+
+
 def test_if_elseif_end() -> None:
     sql, status, _ = transpile_formula(
         'IF [Sales] > 1000 THEN "High" ELSEIF [Sales] > 500 THEN "Medium" ELSE "Low" END'

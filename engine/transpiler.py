@@ -918,9 +918,8 @@ class Emitter:
         return None
 
     def _param_literal(self, info: ParameterInfo) -> tuple[str, str]:
-        sql, dax = _param_values(info)
-        comment = f"/* [Parameters].[{info.caption}] */"
-        return f"{sql} {comment}", dax
+        """Return (sql_literal, dax_literal) with no inline comments in expressions."""
+        return _param_values(info)
 
     def _sql_param(self, node: ParamRef) -> str:
         info = self._lookup_param(node.name)
@@ -1297,7 +1296,13 @@ class Emitter:
         *,
         correlate_dims: list[str] | None = None,
     ) -> str:
-        """GROUP BY LOD grain, then apply outer agg — not a row-weighted window."""
+        """GROUP BY LOD grain, then apply outer agg — one value per group, not row-weighted.
+
+        Nested FIXED example: ``{FIXED [Region]: AVG({FIXED [Customer Name]: SUM([Sales])})}``
+        groups the inner FIXED by Customer Name (all-region totals), restricts to customers
+        present in the outer Region via IN-select, then AVG of those customer totals.
+        Matches DAX ``AVERAGEX(VALUES(Customer Name), ...)`` — not Tableau row-weighted AVG.
+        """
 
         table = quote_ident(self.ctx.source_table or "Orders", self.dialect)
         alias = "_lod"

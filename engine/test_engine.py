@@ -391,9 +391,25 @@ def test_convert_cli_sidecar_writes_xlsx(tmp_path: Path, monkeypatch: pytest.Mon
 
     hyper_path = ROOT / "samples" / "tiny_extract.hyper"
     out = tmp_path / "out.xlsx"
-    code = convert_main([str(hyper_path), str(out)])
+    code = convert_main(["convert", str(hyper_path), str(out)])
     assert code == 0
     assert out.is_file() and out.stat().st_size > 0
+
+
+def test_convert_cli_transpile_sql_one_view_per_datasource(capsys: pytest.CaptureFixture[str]) -> None:
+    from desktop.convert_cli import main as convert_main
+
+    code = convert_main(["transpile", str(SAMPLE), "--dialect", "ansi"])
+    assert code == 0
+    out = capsys.readouterr().out.strip().splitlines()[-1]
+    payload = json.loads(out)
+    assert payload["ok"] is True
+    script = payload["sql_script"]
+    assert "CREATE VIEW" in script
+    assert 'CREATE VIEW "Sample Superstore" AS' in script
+    assert 'CREATE VIEW "Profit Ratio" AS' not in script
+    assert "-- Aggregates / LOD" in script
+    assert payload.get("skipped")
 
 
 def test_hyper_sheet_title_skips_tableau_temp() -> None:

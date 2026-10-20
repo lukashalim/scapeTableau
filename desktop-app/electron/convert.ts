@@ -13,8 +13,19 @@ export type ConvertResult =
     }
   | { ok: false; error: string; traceback?: string };
 
+export type TranspileResult =
+  | {
+      ok: true;
+      sql_script: string;
+      workbook: string | null;
+      dialect: string;
+      skipped: { caption: string; status: string; error?: string | null }[];
+      field_count: number;
+      error: null;
+    }
+  | { ok: false; error: string; traceback?: string };
+
 function repoRoot(): string {
-  // desktop-app/ → repo root
   return path.resolve(app.getAppPath(), "..");
 }
 
@@ -47,15 +58,12 @@ export function resolveSidecar(): { command: string; argsPrefix: string[] } {
   return { command: python, argsPrefix: [script] };
 }
 
-export function runConvert(
-  sourcePath: string,
-  outputPath: string,
-): Promise<ConvertResult> {
+function runSidecar(args: string[]): Promise<unknown> {
   const { command, argsPrefix } = resolveSidecar();
-  const args = [...argsPrefix, sourcePath, outputPath];
+  const fullArgs = [...argsPrefix, ...args];
 
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = spawn(command, fullArgs, {
       windowsHide: true,
       env: { ...process.env, PYTHONUNBUFFERED: "1" },
     });
@@ -84,8 +92,7 @@ export function runConvert(
       const last = lines[lines.length - 1];
       if (last) {
         try {
-          const parsed = JSON.parse(last) as ConvertResult;
-          resolve(parsed);
+          resolve(JSON.parse(last));
           return;
         } catch {
           // fall through
@@ -95,4 +102,23 @@ export function runConvert(
       resolve({ ok: false, error: detail });
     });
   });
+}
+
+export function runConvert(
+  sourcePath: string,
+  outputPath: string,
+): Promise<ConvertResult> {
+  return runSidecar(["convert", sourcePath, outputPath]) as Promise<ConvertResult>;
+}
+
+export function runTranspile(
+  sourcePath: string,
+  dialect: string,
+): Promise<TranspileResult> {
+  return runSidecar([
+    "transpile",
+    sourcePath,
+    "--dialect",
+    dialect,
+  ]) as Promise<TranspileResult>;
 }

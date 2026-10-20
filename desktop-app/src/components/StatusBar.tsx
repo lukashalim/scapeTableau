@@ -1,8 +1,9 @@
 type Props = {
   path: string | null;
+  detail?: string | null;
 };
 
-export function StatusBar({ path }: Props) {
+export function StatusBar({ path, detail }: Props) {
   if (!path) {
     return <footer className="status-bar">No file selected</footer>;
   }
@@ -10,8 +11,17 @@ export function StatusBar({ path }: Props) {
   return (
     <footer className="status-bar" title={path}>
       <strong>{name}</strong>
-      <span aria-hidden="true"> · </span>
-      <span>{path}</span>
+      {detail ? (
+        <>
+          <span aria-hidden="true"> · </span>
+          <span>{detail}</span>
+        </>
+      ) : (
+        <>
+          <span aria-hidden="true"> · </span>
+          <span>{path}</span>
+        </>
+      )}
     </footer>
   );
 }

@@ -5,15 +5,23 @@ import {
   ipcMain,
   shell,
 } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runConvert, type ConvertResult } from "./convert.js";
-import type { ConvertStatus } from "./types.js";
+import {
+  runConvert,
+  runTranspile,
+  type ConvertResult,
+  type TranspileResult,
+} from "./convert.js";
+import type { ConvertStatus, SqlDialect } from "./types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isDev = !app.isPackaged;
-const ALLOWED = new Set([".hyper", ".twbx", ".tdsx"]);
+const ALLOWED = new Set([".hyper", ".twbx", ".tdsx", ".twb"]);
+const EXTRACT_ALLOWED = new Set([".hyper", ".twbx", ".tdsx", ".twb"]);
+const DIALECTS = new Set(["ansi", "snowflake", "postgres", "duckdb"]);
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -23,10 +31,10 @@ function sendStatus(status: ConvertStatus): void {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 880,
-    height: 620,
+    width: 920,
+    height: 680,
     minWidth: 720,
-    minHeight: 480,
+    minHeight: 520,
     title: "BIEscape Converter",
     backgroundColor: "#eceef2",
     show: false,
@@ -53,24 +61,45 @@ function createWindow(): void {
   });
 }
 
-function defaultOutputPath(sourcePath: string): string {
+function defaultOutputPath(sourcePath: string, ext: string): string {
   const parsed = path.parse(sourcePath);
-  return path.join(parsed.dir, `${parsed.name}.xlsx`);
+  return path.join(parsed.dir, `${parsed.name}${ext}`);
 }
 
 ipcMain.handle("dialog:openExtract", async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: "Open Tableau extract",
+    title: "Open Tableau workbook or extract",
     properties: ["openFile"],
     filters: [
-      { name: "Tableau extracts", extensions: ["hyper", "twbx", "tdsx"] },
+      {
+        name: "Tableau files",
+        extensions: ["twb", "twbx", "hyper", "tdsx"],
+      },
       { name: "All files", extensions: ["*"] },
     ],
   });
   if (result.canceled || !result.filePaths[0]) return null;
   return result.filePaths[0];
 });
+
+ipcMain.handle(
+  "dialog:saveSql",
+  async (_event, defaultName: string, content: string): Promise<string | null> => {
+    if (!mainWindow) return null;
+    const save = await dialog.showSaveDialog(mainWindow, {
+      title: "Save SQL script",
+      defaultPath: defaultName,
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    });
+    if (save.canceled || !save.filePath) return null;
+    const out = save.filePath.endsWith(".sql")
+      ? save.filePath
+      : `${save.filePath}.sql`;
+    fs.writeFileSync(out, content, "utf8");
+    return out;
+  },
+);
 
 ipcMain.handle(
   "convert:run",
@@ -85,11 +114,11 @@ ipcMain.handle(
     }
 
     const ext = path.extname(sourcePath).toLowerCase();
-    if (!ALLOWED.has(ext)) {
+    if (!EXTRACT_ALLOWED.has(ext)) {
       const status: ConvertStatus = {
         phase: "error",
         sourcePath,
-        error: "Choose a .hyper, .twbx, or .tdsx file.",
+        error: "Choose a .hyper, .twbx, .tdsx, or .twb file.",
       };
       sendStatus(status);
       return status;
@@ -101,11 +130,11 @@ ipcMain.handle(
 
     const save = await dialog.showSaveDialog(mainWindow, {
       title: "Save Excel workbook",
-      defaultPath: defaultOutputPath(sourcePath),
+      defaultPath: defaultOutputPath(sourcePath, ".xlsx"),
       filters: [{ name: "Excel", extensions: ["xlsx"] }],
     });
     if (save.canceled || !save.filePath) {
-      const status: ConvertStatus = { phase: "idle" };
+      const status: ConvertStatus = { phase: "selected", sourcePath };
       sendStatus(status);
       return status;
     }
@@ -133,6 +162,67 @@ ipcMain.handle(
       outputPath: result.output,
       sheets: result.sheets,
       notes: result.notes,
+    };
+    sendStatus(status);
+    return status;
+  },
+);
+
+ipcMain.handle(
+  "transpile:run",
+  async (
+    _event,
+    sourcePath: string,
+    dialect: SqlDialect,
+  ): Promise<ConvertStatus> => {
+    if (!sourcePath || typeof sourcePath !== "string") {
+      const status: ConvertStatus = {
+        phase: "error",
+        error: "No file selected.",
+      };
+      sendStatus(status);
+      return status;
+    }
+    const ext = path.extname(sourcePath).toLowerCase();
+    if (!ALLOWED.has(ext)) {
+      const status: ConvertStatus = {
+        phase: "error",
+        sourcePath,
+        error: "Choose a .twb, .twbx, .tdsx, or .hyper file.",
+      };
+      sendStatus(status);
+      return status;
+    }
+    const d = (dialect || "ansi").toLowerCase();
+    if (!DIALECTS.has(d)) {
+      const status: ConvertStatus = {
+        phase: "error",
+        sourcePath,
+        error: `Unsupported dialect: ${dialect}`,
+      };
+      sendStatus(status);
+      return status;
+    }
+
+    sendStatus({ phase: "analyzing", sourcePath, dialect: d });
+    const result: TranspileResult = await runTranspile(sourcePath, d);
+    if (!result.ok) {
+      const status: ConvertStatus = {
+        phase: "error",
+        sourcePath,
+        error: result.error,
+      };
+      sendStatus(status);
+      return status;
+    }
+
+    const status: ConvertStatus = {
+      phase: "sql_ready",
+      sourcePath,
+      dialect: result.dialect,
+      sqlScript: result.sql_script,
+      workbook: result.workbook,
+      skipped: result.skipped,
     };
     sendStatus(status);
     return status;

@@ -1,6 +1,6 @@
 import { useCallback, useState, type DragEvent } from "react";
 
-const ALLOWED = new Set([".hyper", ".twbx", ".tdsx"]);
+const ALLOWED = new Set([".hyper", ".twbx", ".tdsx", ".twb"]);
 
 function extensionOf(name: string): string {
   const i = name.lastIndexOf(".");
@@ -20,7 +20,7 @@ export function DropZone({ busy, onPath, onInvalid }: Props) {
     (file: File | undefined) => {
       if (!file) return;
       if (!ALLOWED.has(extensionOf(file.name))) {
-        onInvalid("Choose a .hyper, .twbx, or .tdsx file.");
+        onInvalid("Choose a .twb, .twbx, .hyper, or .tdsx file.");
         return;
       }
       try {
@@ -105,7 +105,7 @@ export function DropZone({ busy, onPath, onInvalid }: Props) {
           strokeLinecap="round"
         />
       </svg>
-      <p className="drop-title">Drop .hyper, .twbx, or .tdsx here</p>
+      <p className="drop-title">Drop .twb, .twbx, .hyper, or .tdsx here</p>
       <button
         type="button"
         className="browse"

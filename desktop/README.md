@@ -18,9 +18,12 @@ npm run dev
 ## Headless sidecar
 
 ```bash
-python desktop/convert_cli.py samples/tiny_extract.hyper /tmp/out.xlsx
+python desktop/convert_cli.py convert samples/tiny_extract.hyper /tmp/out.xlsx
+python desktop/convert_cli.py transpile samples/superstore_calcs.twb --dialect ansi
 # → one JSON line on stdout
 ```
+
+The Electron app drop zone selects a file; use **Extract** to save Excel or **SQL** to generate / copy / save a local SQL script (dialects: ansi, snowflake, postgres, duckdb).
 
 PyInstaller onedir (used by the Windows installer):
 

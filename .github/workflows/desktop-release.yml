@@ -18,65 +18,49 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build deps
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop-app/package-lock.json
+
+      - name: Install Python build deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install tableauhyperapi pyinstaller
 
-      - name: Build onedir
-        run: pyinstaller desktop/biescape_converter.spec --noconfirm --clean
+      - name: Build convert sidecar (PyInstaller)
+        run: pyinstaller desktop/convert_cli.spec --noconfirm --clean
 
-      - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
+      - name: Install desktop-app deps
+        working-directory: desktop-app
+        run: npm ci
 
-      - name: Sync installer version from tag
+      - name: Sync app version from tag
         shell: pwsh
         run: |
           $ver = "${{ github.ref_name }}".Replace("desktop-v", "")
-          $iss = "desktop/installer.iss"
-          (Get-Content $iss) -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$ver`"" | Set-Content $iss
+          $pkg = "desktop-app/package.json"
+          $json = Get-Content $pkg -Raw | ConvertFrom-Json
+          $json.version = $ver
+          $json | ConvertTo-Json -Depth 100 | Set-Content $pkg
 
-      - name: Compile Windows installer
-        shell: cmd
-        run: '"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" desktop\installer.iss'
+      - name: Build Electron app + NSIS installer
+        working-directory: desktop-app
+        run: npm run pack:win
+        env:
+          # Unsigned v1 — skip code signing
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: BIEscape-Converter-Setup-windows-x64
-          path: dist-installer/BIEscape-Converter-Setup-windows-x64.exe
-
-  build-macos:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install build deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install tableauhyperapi pyinstaller
-
-      - name: Build onedir
-        run: pyinstaller desktop/biescape_converter.spec --noconfirm --clean
-
-      - name: Zip macOS app
-        run: |
-          cd dist
-          zip -r ../BIEscape-Converter-macos-arm64.zip BIEscape-Converter
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: BIEscape-Converter-macos-arm64
-          path: BIEscape-Converter-macos-arm64.zip
+          path: desktop-app/release/BIEscape-Converter-Setup-windows-x64.exe
 
   release:
-    needs: [build-windows, build-macos]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,7 +72,7 @@ jobs:
       - name: Collect release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name '*.exe' -o -name '*.zip' \) -exec cp {} release-assets/ \;
+          find artifacts -type f -name 'BIEscape-Converter-Setup-windows-x64.exe' -exec cp {} release-assets/ \;
           ls -lah release-assets
 
       - name: Create GitHub Release
@@ -96,16 +80,13 @@ jobs:
         with:
           name: BIEscape Converter ${{ github.ref_name }}
           body: |
-            Unsigned desktop builds of **BIEscape Converter** (Hyper / TWBX / TDSX → Excel).
+            Unsigned Windows build of **BIEscape Converter** (Electron + local Hyper / TWBX / TDSX → Excel).
 
-            ### Windows (recommended)
+            ### Windows
             Download **[BIEscape-Converter-Setup-windows-x64.exe](https://github.com/lukashalim/scapeTableau/releases/latest/download/BIEscape-Converter-Setup-windows-x64.exe)** and run the installer.
             SmartScreen may warn — **More info → Run anyway**.
 
-            ### macOS
-            Download the arm64 zip, unzip, then open the app (Gatekeeper: right-click → **Open**).
-
-            Bundle includes Tableau `hyperd` (~300MB). Hosted biescape.com stays list-only for Hyper.
+            Conversion runs entirely offline via a bundled Python sidecar (`tableauhyperapi` / hyperd). Hosted biescape.com stays list-only for Hyper.
           files: release-assets/*
           fail_on_unmatched_files: true
         env:

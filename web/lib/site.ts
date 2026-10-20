@@ -62,7 +62,7 @@ export const LANDING_PAGES: LandingPage[] = [
     description:
       "Extract CSV, TSV, XLS, and XLSX files packaged inside a Tableau .twbx into a downloadable Excel workbook. For Hyper extracts, download the free BIEscape desktop converter.",
     h1: "TWBX to Excel: packaged tables + desktop Hyper",
-    lede: "BIEscape unpacks CSV/TSV/XLS/XLSX inside a .twbx into one .xlsx in the browser. Hyper needs Tableau’s hyperd engine — download the free BIEscape Converter for Windows and macOS.",
+    lede: "BIEscape unpacks CSV/TSV/XLS/XLSX inside a .twbx into one .xlsx in the browser. Hyper needs Tableau’s hyperd engine — download the free BIEscape Converter for Windows.",
     capabilities: [
       "Convert packaged CSV / TSV / XLS / XLSX members into a downloadable .xlsx in the browser.",
       "Copy Custom SQL text onto extra sheets (not run against a warehouse).",
@@ -70,7 +70,7 @@ export const LANDING_PAGES: LandingPage[] = [
     ],
     limitations: [
       ".hyper cannot be converted in the browser or on Vercel (hyperd is too large for serverless).",
-      "Desktop builds are unsigned v1 — macOS Gatekeeper and Windows SmartScreen may warn (Open anyway).",
+      "Desktop builds are unsigned v1 — Windows SmartScreen may warn (More info → Run anyway).",
       "A plain .twb has no packaged tables. Use a .twbx that includes CSV/XLSX extracts, or a .hyper/.tdsx in the desktop app.",
     ],
     faqs: [
@@ -82,7 +82,7 @@ export const LANDING_PAGES: LandingPage[] = [
       {
         question: "Are .hyper extracts converted?",
         answer:
-          "Not in the browser. Download the Windows installer (BIEscape-Converter-Setup-windows-x64.exe) from GitHub Releases, or the macOS zip. Unsigned v1 may trigger SmartScreen / Gatekeeper — Run anyway / Open.",
+          "Not in the browser. Download the Windows installer (BIEscape-Converter-Setup-windows-x64.exe) from GitHub Releases. Unsigned v1 may trigger SmartScreen — More info → Run anyway.",
       },
       {
         question: "Does Custom SQL run?",

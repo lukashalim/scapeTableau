@@ -1,0 +1,231 @@
+:root {
+  --bg: #eceef2;
+  --surface: #ffffff;
+  --ink: #1a1d24;
+  --muted: #6b7280;
+  --border: #d8dde6;
+  --border-strong: #b8c0ce;
+  --accent: #1f6feb;
+  --accent-soft: #e8f0fe;
+  --success: #0f766e;
+  --success-bg: #ecfdf5;
+  --error: #b42318;
+  --error-bg: #fef3f2;
+  --shadow: 0 12px 40px rgba(24, 32, 48, 0.08), 0 2px 8px rgba(24, 32, 48, 0.04);
+  --radius: 16px;
+  --font: "DM Sans", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 32px 0;
+}
+
+.shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 28px 8px;
+}
+
+.brand-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  padding: 12px 28px 24px;
+  min-height: 0;
+  gap: 14px;
+}
+
+.dropzone {
+  flex: 1;
+  min-height: 220px;
+  max-height: 340px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fafbfc 0%, #f4f6f9 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 24px;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+  cursor: pointer;
+  outline: none;
+}
+
+.dropzone:hover,
+.dropzone:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dropzone.dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: scale(1.005);
+}
+
+.dropzone.busy {
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.drop-icon {
+  width: 48px;
+  height: 48px;
+  color: var(--muted);
+}
+
+.dropzone.dragging .drop-icon,
+.dropzone:hover .drop-icon {
+  color: var(--accent);
+}
+
+.drop-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.browse {
+  appearance: none;
+  margin-top: 4px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.browse:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: var(--accent);
+}
+
+.browse:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.caption {
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.banner {
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.banner.success {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid #99f6e4;
+}
+
+.banner.error {
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid #fecaca;
+}
+
+.banner.progress {
+  background: var(--accent-soft);
+  color: #174ea6;
+  border: 1px solid #c5d7fb;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #c5d7fb;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.status-bar {
+  border-top: 1px solid var(--border);
+  background: #f8f9fb;
+  padding: 11px 28px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-bar strong {
+  color: var(--ink);
+  font-weight: 500;
+}

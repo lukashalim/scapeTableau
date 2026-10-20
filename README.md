@@ -13,7 +13,7 @@ Parsing and transpilation execute 100% in-memory. Your files are never persisted
 - **Smart AST Formula Transpilation:** Recursively transpiles Tableau-specific syntax (`IIF`, `ZN`, `IFNULL`, `STARTSWITH`, `CONTAINS`, `CASE`) into ANSI SQL and DAX.
 - **LOD SQL:** `FIXED` / `INCLUDE` / `EXCLUDE` become window functions or grain subqueries (INCLUDE/EXCLUDE use worksheet row/column grain). DAX LOD stays `// TODO: Review LOD logic`.
 - **Extract Data:** Packaged CSV/TSV/XLS/XLSX inside a `.twbx` become a downloadable `.xlsx` (via `openpyxl`). Custom SQL is copied to extra sheets and is not executed. On the hosted site / Vercel, `.hyper` extracts are listed only (hyperd is too large for serverless). Local CLI/Streamlit/desktop can convert Hyper via `tableauhyperapi` (optional for pip; bundled in the desktop app; skipped when `VERCEL` is set).
-- **Desktop converter:** [BIEscape Converter](desktop/README.md) — double-click Windows/macOS app for `.hyper` / `.twbx` / `.tdsx` → Excel. Unsigned Release zips on tags `desktop-v*`.
+- **Desktop converter:** [BIEscape Converter](desktop/README.md) — Electron Windows app (drop zone UI) for `.hyper` / `.twbx` / `.tdsx` → Excel via a local Python sidecar. Unsigned Setup.exe on tags `desktop-v*`.
 - **Inspect Schema:** Datasources, all columns (including hidden), Parameters, connections (passwords redacted), and dashboard wireframes you can Print to PDF.
 - **Multi-Interface Support:** Run it as a CLI tool, an offline Streamlit GUI, a desktop converter, or a Next.js web application.
 

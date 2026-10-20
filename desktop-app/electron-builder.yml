@@ -1,0 +1,7 @@
+# electron-builder config is primarily in package.json "build".
+# This file documents the Windows NSIS artifact name for CI.
+appId: com.biescape.converter
+productName: BIEscape Converter
+directories:
+  output: release
+artifactName: BIEscape-Converter-Setup-windows-x64.${ext}

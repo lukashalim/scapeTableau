@@ -1,0 +1,92 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<workbook source-build='2024.1.0' source-platform='win' version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'>
+  <repository-location id='lod14' path='/workbooks' />
+  <datasources>
+    <datasource caption='Orders' inline='true' name='federated.lod14' version='18.1'>
+      <connection class='excel-direct'>
+        <relation name='Orders' table='[Orders$]' type='table' />
+      </connection>
+      <column caption='Region' datatype='string' name='[Region]' role='dimension' type='nominal' />
+      <column caption='Category' datatype='string' name='[Category]' role='dimension' type='nominal' />
+      <column caption='Sub-Category' datatype='string' name='[Sub-Category]' role='dimension' type='nominal' />
+      <column caption='Customer Name' datatype='string' name='[Customer Name]' role='dimension' type='nominal' />
+      <column caption='Sales' datatype='real' name='[Sales]' role='measure' type='quantitative' />
+      <column caption='Order Date' datatype='date' name='[Order Date]' role='dimension' type='ordinal' />
+      <column caption='C01' datatype='real' name='[C01]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : SUM([Sales])}' />
+      </column>
+      <column caption='C11' datatype='real' name='[C11]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED : SUM([Sales])}' />
+      </column>
+      <column caption='Pct of Total' datatype='real' name='[Pct of Total]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='SUM([Sales]) / MAX({FIXED : SUM([Sales])})' />
+      </column>
+      <column caption='Nested Avg Customer' datatype='real' name='[Nested Avg Customer]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : AVG({FIXED [Customer Name] : SUM([Sales])})}' />
+      </column>
+      <column caption='Avg Customer Include' datatype='real' name='[Avg Customer Include]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='AVG({INCLUDE [Customer Name] : SUM([Sales])})' />
+      </column>
+      <column caption='Exclude Sub-Category Sales' datatype='real' name='[Exclude Sub-Category Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='SUM({EXCLUDE [Sub-Category] : SUM([Sales])})' />
+      </column>
+      <column caption='Include Category Sales' datatype='real' name='[Include Category Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{INCLUDE [Category] : SUM([Sales])}' />
+      </column>
+      <column caption='Region Customers' datatype='integer' name='[Region Customers]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : COUNTD([Customer Name])}' />
+      </column>
+      <column caption='Nested Min Category' datatype='real' name='[Nested Min Category]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : MIN({FIXED [Region], [Category] : SUM([Sales])})}' />
+      </column>
+      <column caption='First Purchase Date' datatype='date' name='[First Purchase Date]' role='dimension' type='ordinal'>
+        <calculation class='tableau' formula='{FIXED [Customer Name] : MIN([Order Date])}' />
+      </column>
+      <column caption='Days Since First Purchase' datatype='integer' name='[Days Since First Purchase]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='DATEDIFF(&#39;day&#39;, [First Purchase Date], [Order Date])' />
+      </column>
+      <column caption='Sales Mix' datatype='real' name='[Sales Mix]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='[Sales] / ([C01] / [C11])' />
+      </column>
+      <column caption='Scaled Sales' datatype='real' name='[Scaled Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='[Sales] * [Parameters].[Multiplier]' />
+      </column>
+      <column caption='Next Month' datatype='date' name='[Next Month]' role='dimension' type='ordinal'>
+        <calculation class='tableau' formula='DATEADD(&#39;month&#39;, 1, [Order Date])' />
+      </column>
+    </datasource>
+    <datasource hasconnection='false' inline='true' name='Parameters' version='18.1'>
+      <column caption='Multiplier' datatype='real' name='[Multiplier]' param-domain-type='any' role='measure' type='quantitative' value='2'>
+        <calculation class='tableau' formula='2' />
+      </column>
+    </datasource>
+  </datasources>
+  <worksheets>
+    <worksheet name='Sheet 1'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders' name='federated.lod14' />
+          </datasources>
+        </view>
+        <rows>[federated.lod14].[none:Region:nk]</rows>
+        <cols>
+          [federated.lod14].[sum:C01:qk],
+          [federated.lod14].[sum:C11:qk],
+          [federated.lod14].[sum:Pct of Total:qk],
+          [federated.lod14].[sum:Nested Avg Customer:qk],
+          [federated.lod14].[sum:Avg Customer Include:qk],
+          [federated.lod14].[sum:Exclude Sub-Category Sales:qk],
+          [federated.lod14].[sum:Include Category Sales:qk],
+          [federated.lod14].[sum:Region Customers:qk],
+          [federated.lod14].[sum:Nested Min Category:qk],
+          [federated.lod14].[sum:First Purchase Date:qk],
+          [federated.lod14].[sum:Days Since First Purchase:qk],
+          [federated.lod14].[sum:Sales Mix:qk],
+          [federated.lod14].[sum:Scaled Sales:qk],
+          [federated.lod14].[sum:Next Month:qk]
+        </cols>
+      </table>
+    </worksheet>
+  </worksheets>
+</workbook>

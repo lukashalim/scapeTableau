@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 from engine.schema import (
     CalculatedField,
     DashboardInfo,
     DatasourceInfo,
     ExtractInventory,
     InspectSnapshot,
+    ParameterInfo,
     ParseStatus,
     TranspileResult,
 )
@@ -97,14 +100,41 @@ def build_sql_script(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def build_dax_script(fields: list[CalculatedField], *, workbook_name: str | None = None) -> str:
+def _dax_table_name(fields: list[CalculatedField]) -> str:
+    ident = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[")
+    for field in fields:
+        match = ident.search(field.dax or "")
+        if match:
+            return match.group(1)
+    return "Orders"
+
+
+def build_dax_script(
+    fields: list[CalculatedField],
+    *,
+    workbook_name: str | None = None,
+    parameters: list[ParameterInfo] | None = None,
+) -> str:
+    from engine.transpiler import param_dax_literal, param_measure_name
+
     lines = ["// BIEscape generated DAX"]
     if workbook_name:
         lines.append(f"// Source workbook: {workbook_name}")
+    table = _dax_table_name(fields)
     measures = [f for f in fields if (f.dax_kind or "measure") == "measure"]
     columns = [f for f in fields if (f.dax_kind or "measure") != "measure"]
 
-    def _emit_section(title: str, group: list[CalculatedField]) -> None:
+    lines.append("")
+    lines.append("// Parameters")
+    params = list(parameters or [])
+    if not params:
+        lines.append("// (none)")
+    else:
+        for info in params:
+            lines.append(f"[{param_measure_name(info.caption)}] = {param_dax_literal(info)}")
+        lines.append("")
+
+    def _emit_section(title: str, group: list[CalculatedField], *, kind: str) -> None:
         lines.append("")
         lines.append(f"// {title}")
         if not group:
@@ -114,12 +144,17 @@ def build_dax_script(fields: list[CalculatedField], *, workbook_name: str | None
             dax_st = field.dax_status.value if field.dax_status is not None else "unknown"
             lines.append(f"// {field.caption} (dax_status={dax_st})")
             body = field.dax or "// (no DAX)"
-            for dax_line in body.splitlines() or [body]:
+            name = field.caption or field.name
+            if kind == "measure":
+                assign = f"[{name}] := {body}"
+            else:
+                assign = f"{table}[{name}] = {body}"
+            for dax_line in assign.splitlines() or [assign]:
                 lines.append(dax_line)
             lines.append("")
 
-    _emit_section("Measures", measures)
-    _emit_section("Calculated columns", columns)
+    _emit_section("Measures", measures, kind="measure")
+    _emit_section("Calculated columns", columns, kind="column")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -180,6 +215,7 @@ def assemble_result(
     dashboards: list[DashboardInfo] | None = None,
     target: str = "sql",
     script_style: str = "sql",
+    parameters: list[ParameterInfo] | None = None,
 ) -> TranspileResult:
     return TranspileResult(
         calculated_fields=fields,
@@ -197,6 +233,8 @@ def assemble_result(
         inspect=inspect,
         extract_inventory=extract_inventory,
         dashboards=list(dashboards or (inspect.dashboards if inspect else [])),
-        dax_script=build_dax_script(fields, workbook_name=workbook_name),
+        dax_script=build_dax_script(
+            fields, workbook_name=workbook_name, parameters=parameters
+        ),
         target=target,
     )

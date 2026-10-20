@@ -84,6 +84,21 @@ def test_lod_dax_calculate_allexcept() -> None:
     assert dax == "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))"
 
 
+def test_max_fixed_none_is_calculate_not_maxx() -> None:
+    dax, status, err = transpile_formula("MAX({FIXED : SUM([Sales])})", target="dax")
+    assert status == ParseStatus.ok
+    assert err is None
+    assert dax == "CALCULATE(SUM(Orders[Sales]), REMOVEFILTERS(Orders))"
+    assert "MAXX" not in dax
+
+
+def test_dateadd_month_emits_edate() -> None:
+    dax, status, err = transpile_formula("DATEADD('month', 1, [Order Date])", target="dax")
+    assert status == ParseStatus.ok
+    assert err is None
+    assert dax == "EDATE(Orders[Order Date], 1)"
+
+
 def test_if_elseif_end() -> None:
     sql, status, _ = transpile_formula(
         'IF [Sales] > 1000 THEN "High" ELSEIF [Sales] > 500 THEN "Medium" ELSE "Low" END'

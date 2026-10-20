@@ -23,16 +23,17 @@ EXPECTED_DAX = {
     "Region Customers": "CALCULATE(DISTINCTCOUNT(Orders[Customer]), ALLEXCEPT(Orders, Orders[Region]))",
     "Nested Min Category": (
         "CALCULATE(MINX(SUMMARIZE(Orders, Orders[Region], Orders[Category]), "
-        "CALCULATE(SUM(Orders[Sales]))), ALLEXCEPT(Orders, Orders[Region]))"
+        "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region], Orders[Category]))), "
+        "ALLEXCEPT(Orders, Orders[Region]))"
     ),
     "Region Share": "DIVIDE([Fixed Region Sales], [Grand Total Sales])",
     "Region Case": 'SWITCH(Orders[Region], "East", 1, "West", 2, 0)',
     "Sales Band": 'SWITCH(TRUE(), Orders[Sales] > 100, "High", "Low")',
-    "Scaled Sales": "Orders[Sales] * 2 /* [Parameters].[Multiplier] */",
+    "Scaled Sales": "Orders[Sales] * [Multiplier Value]",
     "Order Year": "YEAR(Orders[Order Date])",
     "Ship Days": "DATEDIFF(Orders[Order Date], Orders[Ship Date], DAY)",
     "Order Month": "DATE(YEAR(Orders[Order Date]), MONTH(Orders[Order Date]), 1)",
-    "Next Month": "DATEADD(Orders[Order Date], 1, MONTH)",
+    "Next Month": "EDATE(Orders[Order Date], 1)",
 }
 
 EXPECTED_KIND = {
@@ -70,6 +71,11 @@ def test_all_lod_calcs_dax_exact() -> None:
     assert "dax_status=" in result.dax_script
     assert "// Measures" in result.dax_script
     assert "// Calculated columns" in result.dax_script
+    assert "[Fixed Region Sales] :=" in result.dax_script
+    assert "Orders[Next Month] =" in result.dax_script
+    assert "[Multiplier Value] = 2" in result.dax_script
+    assert "/* [Parameters].[Multiplier] */" not in result.dax_script
+    assert "DATEADD(Orders[Order Date], 1, MONTH)" not in (fields["Next Month"].dax or "")
 
 
 def test_avg_include_sql_groups_customers() -> None:

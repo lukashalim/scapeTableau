@@ -1,0 +1,37 @@
+Region,Category,Sub-Category,Customer Name,Sales,Order Date
+East,Furniture,Chairs,Avery Lane,200,2020-01-05
+East,Office Supplies,Paper,Casey Ortiz,50,2020-02-01
+East,Furniture,Tables,East One,400,2020-01-10
+East,Office Supplies,Binders,East Two,350,2020-03-01
+East,Technology,Phones,East Three,300,2020-01-20
+East,Furniture,Chairs,East Four,150,2020-04-01
+East,Office Supplies,Paper,East Four,150,2020-04-15
+East,Technology,Phones,East Five,180,2020-05-01
+East,Furniture,Tables,East Five,120,2020-05-20
+Central,Office Supplies,Paper,Blake Chen,150,2020-01-08
+Central,Furniture,Chairs,Casey Ortiz,50,2020-02-10
+Central,Technology,Phones,Central One,500,2020-01-12
+Central,Furniture,Tables,Central Two,500,2020-03-05
+Central,Office Supplies,Binders,Central Three,400,2020-02-18
+Central,Furniture,Chairs,Central Four,250,2020-04-08
+Central,Office Supplies,Paper,Central Four,150,2020-04-22
+Central,Technology,Phones,Central Five,220,2020-05-11
+Central,Furniture,Tables,Central Five,180,2020-05-28
+West,Furniture,Chairs,Avery Lane,100,2020-06-01
+West,Technology,Phones,Casey Ortiz,50,2020-02-20
+West,Office Supplies,Paper,West One,500,2020-01-15
+West,Furniture,Tables,West Two,500,2020-03-12
+West,Technology,Phones,West Three,450,2020-02-25
+West,Office Supplies,Binders,West Four,220,2020-04-18
+West,Furniture,Chairs,West Four,180,2020-04-30
+West,Technology,Phones,West Five,250,2020-05-06
+West,Office Supplies,Paper,West Five,150,2020-05-19
+South,Office Supplies,Binders,Blake Chen,250,2020-06-04
+South,Furniture,Chairs,Casey Ortiz,50,2020-03-03
+South,Technology,Phones,South One,700,2020-01-22
+South,Furniture,Tables,South Two,650,2020-03-18
+South,Office Supplies,Paper,South Three,550,2020-02-14
+South,Furniture,Chairs,South Four,300,2020-04-11
+South,Technology,Phones,South Four,250,2020-04-27
+South,Office Supplies,Binders,South Five,280,2020-05-09
+South,Furniture,Tables,South Five,270,2020-05-30

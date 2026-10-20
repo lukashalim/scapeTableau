@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import duckdb
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from engine import transpile
 from engine.schema import ParseStatus
@@ -93,30 +98,41 @@ def test_lod_duckdb_matches_expected() -> None:
     ]
     got = [dict(zip(cols, row, strict=True)) for row in rows]
 
-    east_sales, west_sales = 175.0, 280.0
-    grand = 455.0
+    region_sales = {"East": 175.0, "West": 280.0, "Central": 720.26}
+    grand = 1175.26
+    include = {
+        "East": {"Furniture": 125.0, "Office Supplies": 50.0},
+        "West": {"Furniture": 200.0, "Office Supplies": 80.0},
+        "Central": {"Furniture": 720.26},
+    }
+    avg_customer = {"East": 87.5, "West": 280.0, "Central": 720.26}
+    region_customers = {"East": 2, "West": 1, "Central": 1}
+    nested_min = {"East": 50.0, "West": 80.0, "Central": 720.26}
+    region_case = {"East": 1, "West": 2, "Central": 0}
+    saw_central = False
     for row in got:
         region = row["Region"]
         category = row["Category"]
-        assert row["Fixed Region Sales"] == (east_sales if region == "East" else west_sales)
-        assert row["Grand Total Sales"] == grand
-        include = {"East": {"Furniture": 125.0, "Office Supplies": 50.0}, "West": {"Furniture": 200.0, "Office Supplies": 80.0}}
+        if region == "Central":
+            saw_central = True
+        assert row["Fixed Region Sales"] == region_sales[region]
+        assert abs(row["Grand Total Sales"] - grand) < 1e-9
         assert row["Include Category Sales"] == include[region][category]
-        avg_customer = {"East": 87.5, "West": 280.0, "Central": 720.26}
         got_avg = row["Avg Customer Sales"]
         if region == "Central":
             assert abs(got_avg - 720.26) < 0.01
         else:
             assert got_avg == avg_customer[region]
-        assert row["Exclude Region Sales"] == grand
-        assert row["Region Customers"] == (2 if region == "East" else 1)
-        assert row["Nested Min Category"] == (50.0 if region == "East" else 80.0)
-        share = (east_sales if region == "East" else west_sales) / grand
+        assert abs(row["Exclude Region Sales"] - grand) < 1e-9
+        assert row["Region Customers"] == region_customers[region]
+        assert row["Nested Min Category"] == nested_min[region]
+        share = region_sales[region] / grand
         assert abs(row["Region Share"] - share) < 1e-9
-        assert row["Region Case"] == (1 if region == "East" else 2)
+        assert row["Region Case"] == region_case[region]
         assert row["Sales Band"] == ("High" if row["Sales"] > 100 else "Low")
         assert row["Scaled Sales"] == row["Sales"] * 2
         assert row["Order Year"] == 2020
+    assert saw_central, "orders.csv must include Central rows for the 720.26 check"
 
     ship = con.execute(
         """

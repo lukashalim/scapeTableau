@@ -269,4 +269,5 @@ def transpile(
         dashboards=inspect.dashboards,
         target=target_l,
         script_style=script_style,
+        parameters=workbook.parameters,
     )

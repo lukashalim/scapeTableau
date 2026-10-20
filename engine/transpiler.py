@@ -639,18 +639,50 @@ def _has_countd(node: Node) -> bool:
     return any(isinstance(n, Call) and n.name.upper() == "COUNTD" for n in _walk(node))
 
 
+def _is_dateish_name(name: str) -> bool:
+    lowered = name.strip().lower()
+    return "date" in lowered
+
+
+def _unwrap_node(node: Node) -> Node:
+    while isinstance(node, Paren):
+        node = node.expr
+    return node
+
+
+def _is_row_level_lod(node: LodExpr) -> bool:
+    """FIXED MIN/MAX of a date is a row attribute (e.g. First Purchase Date)."""
+
+    agg = _unwrap_node(node.agg)
+    if isinstance(agg, Call) and agg.name.upper() in {"MIN", "MAX", "ATTR"} and agg.args:
+        arg = _unwrap_node(agg.args[0])
+        if isinstance(arg, FieldRef) and _is_dateish_name(arg.name):
+            return True
+    return False
+
+
+def _kind_combine(kinds: list[str]) -> str:
+    if "calculated_column" in kinds:
+        return "calculated_column"
+    if "measure" in kinds:
+        return "measure"
+    return "calculated_column"
+
+
 def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
-    """measure if the root is an agg/LOD (or DIVIDE of those); else calculated_column."""
+    """measure if the root is an agg/LOD; bare T[Col] anywhere → calculated_column."""
 
     ctx = ctx or FormulaContext()
     if isinstance(node, LodExpr):
-        return "measure"
+        return "calculated_column" if _is_row_level_lod(node) else "measure"
     if isinstance(node, Paren):
         return classify_dax_kind(node.expr, ctx)
     if isinstance(node, UnaryOp):
         return classify_dax_kind(node.expr, ctx)
     if isinstance(node, FieldRef):
         return ctx.calc_dax_kind.get(node.name, "calculated_column")
+    if isinstance(node, ParamRef):
+        return "calculated_column"
     if isinstance(node, Call):
         fn = node.name.upper()
         if fn in AGG_FUNCS:
@@ -658,19 +690,17 @@ def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
         if fn in ROW_FUNCS:
             return "calculated_column"
         kinds = [classify_dax_kind(arg, ctx) for arg in node.args]
-        return "measure" if "measure" in kinds else "calculated_column"
+        return _kind_combine(kinds)
     if isinstance(node, BinaryOp):
-        left = classify_dax_kind(node.left, ctx)
-        right = classify_dax_kind(node.right, ctx)
-        if left == "measure" or right == "measure":
-            return "measure"
-        return "calculated_column"
+        return _kind_combine(
+            [classify_dax_kind(node.left, ctx), classify_dax_kind(node.right, ctx)]
+        )
     if isinstance(node, IfExpr):
         parts = [classify_dax_kind(c, ctx) for c, _ in node.branches]
         parts.extend(classify_dax_kind(t, ctx) for _, t in node.branches)
         if node.else_expr is not None:
             parts.append(classify_dax_kind(node.else_expr, ctx))
-        return "measure" if "measure" in parts else "calculated_column"
+        return _kind_combine(parts)
     if isinstance(node, CaseExpr):
         parts = [classify_dax_kind(c, ctx) for c, _ in node.branches]
         parts.extend(classify_dax_kind(t, ctx) for _, t in node.branches)
@@ -678,8 +708,36 @@ def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
             parts.append(classify_dax_kind(node.expr, ctx))
         if node.else_expr is not None:
             parts.append(classify_dax_kind(node.else_expr, ctx))
-        return "measure" if "measure" in parts else "calculated_column"
+        return _kind_combine(parts)
     return "calculated_column"
+
+
+def param_measure_name(caption: str) -> str:
+    return f"{caption} Value"
+
+
+def _param_values(info: ParameterInfo) -> tuple[str, str]:
+    raw = info.value if info.value not in (None, "") else (info.formula or "NULL")
+    dt = (info.datatype or "").lower()
+    if dt in {"string", "str"}:
+        text = str(raw).strip("'\"")
+        return sql_string(text), dax_string(text)
+    if dt in {"boolean", "bool"}:
+        flag = str(raw).strip().lower() in {"true", "1", "yes"}
+        lit = "TRUE" if flag else "FALSE"
+        return lit, lit
+    text = str(raw).strip().strip('"')
+    if re.fullmatch(r"-?\d+(\.\d+)?", text):
+        return text, text
+    if dt in {"date", "datetime"} or (text.startswith("#") and text.endswith("#")):
+        inner = text.strip("#")
+        return sql_string(inner), f"DATEVALUE({dax_string(inner)})"
+    return text, text
+
+
+def param_dax_literal(info: ParameterInfo) -> str:
+    _, dax = _param_values(info)
+    return dax
 
 
 def _norm_part(arg: Node) -> str:
@@ -860,29 +918,9 @@ class Emitter:
         return None
 
     def _param_literal(self, info: ParameterInfo) -> tuple[str, str]:
-        raw = info.value if info.value not in (None, "") else (info.formula or "NULL")
-        dt = (info.datatype or "").lower()
-        sql: str
-        dax: str
-        if dt in {"string", "str"}:
-            sql, dax = sql_string(str(raw).strip("'\"" )), dax_string(str(raw).strip("'\""))
-        elif dt in {"boolean", "bool"}:
-            flag = str(raw).strip().lower() in {"true", "1", "yes"}
-            sql = "TRUE" if flag else "FALSE"
-            dax = sql
-        else:
-            text = str(raw).strip().strip('"')
-            if re.fullmatch(r"-?\d+(\.\d+)?", text):
-                sql = dax = text
-            elif dt in {"date", "datetime"} or (text.startswith("#") and text.endswith("#")):
-                inner = text.strip("#")
-                sql = sql_string(inner)
-                dax = f"DATEVALUE({dax_string(inner)})"
-            else:
-                sql = text
-                dax = text
+        sql, dax = _param_values(info)
         comment = f"/* [Parameters].[{info.caption}] */"
-        return f"{sql} {comment}", f"{dax} {comment}"
+        return f"{sql} {comment}", dax
 
     def _sql_param(self, node: ParamRef) -> str:
         info = self._lookup_param(node.name)
@@ -895,8 +933,7 @@ class Emitter:
         info = self._lookup_param(node.name)
         if info is None:
             raise TranspileFormulaError(f"Unknown parameter {node.name}")
-        _, dax = self._param_literal(info)
-        return dax
+        return f"[{param_measure_name(info.caption)}]"
 
     def _dax_if(self, branches: list[tuple[Node, Node]], else_expr: Node | None) -> str:
         if not branches:
@@ -1117,7 +1154,10 @@ class Emitter:
         if fn == "DATEADD":
             if len(args) != 3:
                 raise TranspileFormulaError("DATEADD expects 3 arguments")
-            return f"DATEADD({args[2]}, {args[1]}, {self._dax_interval(node)})"
+            part = self._dax_interval(node)
+            if part == "MONTH":
+                return f"EDATE({args[2]}, {args[1]})"
+            return f"DATEADD({args[2]}, {args[1]}, {part})"
         if fn == "DATETRUNC":
             if len(args) != 2:
                 raise TranspileFormulaError("DATETRUNC expects 2 arguments")
@@ -1261,16 +1301,38 @@ class Emitter:
 
         table = quote_ident(self.ctx.source_table or "Orders", self.dialect)
         alias = "_lod"
-        group_dims = self._lod_grain(lod)
+        kind = lod.kind.upper()
+        own_dims = [self._dim_name(d) for d in lod.dims]
+        if kind == "FIXED":
+            group_dims = own_dims
+            if correlate_dims is None:
+                correlate_dims = list(own_dims)
+        else:
+            group_dims = self._lod_grain(lod)
+            if correlate_dims is None:
+                correlate_dims = list(self.ctx.view_dims or [])
+        extra_outer = [d for d in correlate_dims if d not in group_dims]
+        eq_corr = [d for d in correlate_dims if d in group_dims]
         group_sql = [quote_ident(g, self.dialect) for g in group_dims]
-        if correlate_dims is None:
-            correlate_dims = list(self.ctx.view_dims or [])
-        corr_sql = [quote_ident(g, self.dialect) for g in correlate_dims]
         inner_agg = self.emit_sql(lod.agg)
-        where = ""
-        if corr_sql:
-            preds = " AND ".join(f"{alias}.{col} = {table}.{col}" for col in corr_sql)
-            where = f" WHERE {preds}"
+        if kind == "FIXED" and not group_dims:
+            return f"(SELECT {inner_agg} FROM {table})"
+        where_parts: list[str] = []
+        if eq_corr:
+            corr_sql = [quote_ident(g, self.dialect) for g in eq_corr]
+            where_parts.append(" AND ".join(f"{alias}.{col} = {table}.{col}" for col in corr_sql))
+        if extra_outer and group_dims:
+            g_alias = "_g"
+            extra_sql = [quote_ident(g, self.dialect) for g in extra_outer]
+            g_preds = " AND ".join(f"{g_alias}.{col} = {table}.{col}" for col in extra_sql)
+            in_left = ", ".join(f"{alias}.{col}" for col in group_sql)
+            in_right = ", ".join(f"{g_alias}.{col}" for col in group_sql)
+            left_expr = f"({in_left})" if len(group_sql) > 1 else in_left
+            right_expr = in_right
+            where_parts.append(
+                f"{left_expr} IN (SELECT {right_expr} FROM {table} AS {g_alias} WHERE {g_preds})"
+            )
+        where = f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
         group = ""
         if group_sql:
             group = " GROUP BY " + ", ".join(f"{alias}.{col}" for col in group_sql)
@@ -1309,10 +1371,28 @@ class Emitter:
         return self.emit_dax(node)
 
     def _dax_agg_over_lod(self, outer_fn: str, lod: LodExpr) -> str:
+        kind = lod.kind.upper()
+        inner = self._dax_agg_expr(lod.agg)
+        table = self._dax_table()
+        dim_names = [self._dim_name(d) for d in lod.dims]
+        if kind == "FIXED":
+            if not dim_names:
+                return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
+            excepts = ", ".join(self._dax_col(d) for d in dim_names)
+            calc = f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+            if outer_fn in {"AVG", "MIN", "MAX", "COUNT"}:
+                iter_fn = DAX_ITER.get(outer_fn, f"{outer_fn}X")
+                table_expr = self._dax_summarize(dim_names)
+                return f"{iter_fn}({table_expr}, {calc})"
+            return calc
+        if kind == "EXCLUDE":
+            if not dim_names:
+                return inner
+            rf = ", ".join(self._dax_col(d) for d in dim_names)
+            return f"CALCULATE({inner}, REMOVEFILTERS({rf}))"
         grain = self._lod_grain(lod)
         iter_fn = DAX_ITER.get(outer_fn, f"{outer_fn}X")
         table_expr = self._dax_summarize(grain)
-        inner = self._dax_agg_expr(lod.agg)
         return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
 
     def _dax_lod(self, lod: LodExpr) -> str:

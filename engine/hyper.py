@@ -41,7 +41,21 @@ def hyper_conversion_enabled() -> bool:
 def _cell_value(value: object) -> object:
     if value is None:
         return ""
-    # Hyper Date / Timestamp / Interval → portable text for Excel
+    # tableauhyperapi Date/Timestamp are not openpyxl-safe; convert first.
+    # Timestamp has both to_datetime and to_date — prefer datetime.
+    to_datetime = getattr(value, "to_datetime", None)
+    if callable(to_datetime):
+        try:
+            return to_datetime()
+        except Exception:
+            pass
+    to_date = getattr(value, "to_date", None)
+    if callable(to_date):
+        try:
+            return to_date()
+        except Exception:
+            pass
+    # Interval / other Hyper types → portable text
     iso = getattr(value, "isoformat", None)
     if callable(iso):
         try:
@@ -50,6 +64,10 @@ def _cell_value(value: object) -> object:
             return str(value)
     if isinstance(value, (bytes, bytearray)):
         return value.decode("utf-8", errors="replace")
+    # Named Hyper values (Date without converters) still stringify cleanly
+    module = getattr(type(value), "__module__", "") or ""
+    if module.startswith("tableauhyperapi"):
+        return str(value)
     return value
 
 

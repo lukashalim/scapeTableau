@@ -302,6 +302,23 @@ def test_csv_to_xlsx_and_hyper_listed_not_converted() -> None:
     assert all("sales.hyper" != sheet for sheet in inv2.converted_sheets)
 
 
+def test_convert_cli_sidecar_writes_xlsx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("tableauhyperapi")
+    from engine.hyper import hyper_conversion_enabled
+
+    monkeypatch.delenv("VERCEL", raising=False)
+    if not hyper_conversion_enabled():
+        pytest.skip("tableauhyperapi unavailable")
+
+    from desktop.convert_cli import main as convert_main
+
+    hyper_path = ROOT / "samples" / "tiny_extract.hyper"
+    out = tmp_path / "out.xlsx"
+    code = convert_main([str(hyper_path), str(out)])
+    assert code == 0
+    assert out.is_file() and out.stat().st_size > 0
+
+
 def test_hyper_date_timestamp_cell_values_excel_safe() -> None:
     """tableauhyperapi Date has no isoformat — must become datetime.date for openpyxl."""
     pytest.importorskip("tableauhyperapi")

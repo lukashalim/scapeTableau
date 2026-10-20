@@ -1,37 +1,53 @@
 # BIEscape Converter (desktop)
 
-Double-click app that converts Tableau `.hyper` / `.twbx` / `.tdsx` extracts to Excel via the same `extract_to_xlsx` path as the CLI.
+Electron + React UI that converts Tableau `.hyper` / `.twbx` / `.tdsx` extracts to Excel via the same `extract_to_xlsx` engine as the CLI.
 
-## Run from source
+Conversion runs **locally** through a headless Python sidecar (`desktop/convert_cli.py`). Nothing is uploaded.
+
+## App location
+
+The shipped UI lives in [`desktop-app/`](../desktop-app/).
 
 ```bash
-pip install -r requirements.txt
-pip install tableauhyperapi
-python desktop/biescape_converter.py
+# Dev (Python sidecar via python3 + Vite + Electron)
+cd desktop-app
+npm install
+npm run dev
 ```
 
-## Unsigned downloads
+## Headless sidecar
 
-GitHub Releases ship a **Windows installer** (`.exe`) and a macOS zip — both **unsigned** (v1):
+```bash
+python desktop/convert_cli.py samples/tiny_extract.hyper /tmp/out.xlsx
+# → one JSON line on stdout
+```
 
-- **Windows:** download `BIEscape-Converter-Setup-windows-x64.exe` → run. SmartScreen: **More info** → **Run anyway**.
-- **macOS Gatekeeper:** right-click the app → **Open** → confirm.
+PyInstaller onedir (used by the Windows installer):
 
-Direct Windows link:  
+```bash
+pip install tableauhyperapi pyinstaller
+pyinstaller desktop/convert_cli.spec --noconfirm --clean
+# → dist/biescape-convert/
+```
+
+## Windows installer
+
+CI on tags `desktop-v*` builds the sidecar, then `electron-builder` NSIS:
+
+`BIEscape-Converter-Setup-windows-x64.exe`
+
+Direct download:
+
 `https://github.com/lukashalim/scapeTableau/releases/latest/download/BIEscape-Converter-Setup-windows-x64.exe`
 
-Paid Apple notarization and Authenticode signing are not part of this slice.
-
-## Build locally
+Local pack (after sidecar build):
 
 ```bash
-pip install pyinstaller tableauhyperapi openpyxl
-pyinstaller desktop/biescape_converter.spec
-# dist/BIEscape-Converter/  (onedir)
-
-# Windows installer (requires Inno Setup 6):
-iscc desktop/installer.iss
-# → dist-installer/BIEscape-Converter-Setup-windows-x64.exe
+cd desktop-app
+npm run pack:win
+# → desktop-app/release/BIEscape-Converter-Setup-windows-x64.exe
 ```
 
-CI builds the Windows Setup `.exe` and macOS arm64 zip on tags `desktop-v*` and attaches them to the GitHub Release.
+## Legacy Tkinter
+
+`biescape_converter.py` remains for local experiments but is **not** shipped in new releases.

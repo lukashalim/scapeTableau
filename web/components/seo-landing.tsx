@@ -93,7 +93,7 @@ export function SeoLanding({ page }: SeoLandingProps) {
               >
                 BIEscape Converter
               </a>{" "}
-              (unsigned Windows / macOS zips). Browser conversion stays CSV/XLSX-only.
+              (unsigned Windows installer). Browser conversion stays CSV/XLSX-only.
             </>
           ) : (
             <>

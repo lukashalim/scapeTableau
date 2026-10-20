@@ -150,14 +150,14 @@ function ExtractPanel({
             </a>
             <p className="text-xs text-muted-foreground">
               Direct .exe download (~300MB with hyperd). Unsigned — SmartScreen may warn (More info → Run anyway).
-              macOS zip is on the{" "}
+              Release notes:{" "}
               <a
                 href={DESKTOP_RELEASES_PAGE}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-4"
               >
-                Releases page
+                GitHub Releases
               </a>
               .
             </p>

@@ -13,5 +13,8 @@ web/out/
 web/.turbo/
 .next/
 dist/
+dist-electron/
+desktop-app/release/
+hyperd.log
 .coverage
 htmlcov/

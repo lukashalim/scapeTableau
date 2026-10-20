@@ -134,9 +134,23 @@ function ExtractPanel({
       {hyperOnly ? (
         <Alert>
           <AlertTitle>Hyper-only package</AlertTitle>
-          <AlertDescription>
-            .hyper extracts are listed but not converted here. Excel conversion of Hyper needs local tableauhyperapi
-            (hyperd) and is not available on this web engine or Vercel.
+          <AlertDescription className="space-y-3">
+            <p>
+              Hyper extracts need the Tableau Hyper engine and can&apos;t be converted in the browser.
+            </p>
+            <p>Download the free desktop converter to turn this into Excel on your computer.</p>
+            <a
+              href="https://github.com/lukashalim/scapeTableau/releases/latest"
+              target="_blank"
+              rel="noreferrer"
+              className={cn(buttonVariants({ variant: "default" }), "inline-flex")}
+            >
+              <Download data-icon="inline-start" />
+              Download BIEscape Converter
+            </a>
+            <p className="text-xs text-muted-foreground">
+              Unsigned Windows / macOS zips (~300MB with hyperd). Gatekeeper / SmartScreen may warn — Open anyway.
+            </p>
           </AlertDescription>
         </Alert>
       ) : null}

@@ -64,9 +64,17 @@ def _read_bytes(source: Source) -> tuple[bytes, str | None]:
 def _is_zip(data: bytes, filename: str | None) -> bool:
     if data.startswith(ZIP_MAGIC):
         return True
-    if filename and filename.lower().endswith(".twbx"):
+    if filename and filename.lower().endswith((".twbx", ".tdsx")):
         return True
     return False
+
+
+def is_hyper_bytes(data: bytes, filename: str | None = None) -> bool:
+    """True for a standalone .hyper extract (filename or Hyper magic)."""
+
+    if filename and filename.lower().endswith(".hyper"):
+        return True
+    return data.startswith(b"Hyper")
 
 
 def member_kind(path: str) -> ArchiveKind:

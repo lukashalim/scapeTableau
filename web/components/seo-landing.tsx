@@ -20,10 +20,20 @@ export function SeoLanding({ page }: SeoLandingProps) {
         <div className="max-w-3xl space-y-5">
           <h1 className="font-heading text-4xl font-semibold tracking-tight text-balance md:text-5xl">{page.h1}</h1>
           <p className="text-lg text-muted-foreground md:text-xl">{page.lede}</p>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
             <Link href="/#converter" className={cn(buttonVariants({ size: "lg" }))}>
-              🚀 Open the converter
+              Open the converter
             </Link>
+            {page.slug === "twbx-to-excel" ? (
+              <a
+                href={`${GITHUB_URL}/releases/latest`}
+                target="_blank"
+                rel="noreferrer"
+                className={cn(buttonVariants({ size: "lg" }))}
+              >
+                Download desktop converter
+              </a>
+            ) : null}
             <a
               href={GITHUB_URL}
               target="_blank"
@@ -72,11 +82,28 @@ export function SeoLanding({ page }: SeoLandingProps) {
           </dl>
         </div>
         <p className="max-w-3xl text-sm text-muted-foreground">
-          .hyper extracts are listed but not converted. Clone the repo at{" "}
-          <a href={GITHUB_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
-            {GITHUB_URL}
-          </a>
-          .
+          {page.slug === "twbx-to-excel" ? (
+            <>
+              For Hyper extracts, download{" "}
+              <a
+                href={`${GITHUB_URL}/releases/latest`}
+                className="underline underline-offset-4"
+                target="_blank"
+                rel="noreferrer"
+              >
+                BIEscape Converter
+              </a>{" "}
+              (unsigned Windows / macOS zips). Browser conversion stays CSV/XLSX-only.
+            </>
+          ) : (
+            <>
+              .hyper extracts are listed but not converted in the browser. Clone the repo at{" "}
+              <a href={GITHUB_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
+                {GITHUB_URL}
+              </a>
+              .
+            </>
+          )}
         </p>
       </section>
       <SiteFooter />

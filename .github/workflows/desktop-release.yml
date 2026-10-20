@@ -1,0 +1,85 @@
+name: Desktop release
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            artifact: BIEscape-Converter-windows-x64
+          - os: macos-14
+            artifact: BIEscape-Converter-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install tableauhyperapi pyinstaller
+
+      - name: Build onedir
+        run: pyinstaller desktop/biescape_converter.spec --noconfirm --clean
+
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/BIEscape-Converter/* -DestinationPath ${{ matrix.artifact }}.zip
+
+      - name: Zip (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r "../${{ matrix.artifact }}.zip" BIEscape-Converter
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect zips
+        run: |
+          mkdir -p release-assets
+          find artifacts -name '*.zip' -exec cp {} release-assets/ \;
+          ls -la release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: BIEscape Converter ${{ github.ref_name }}
+          body: |
+            Unsigned desktop builds of **BIEscape Converter** (Hyper / TWBX / TDSX → Excel).
+
+            - Windows: unzip and run `BIEscape-Converter.exe`. SmartScreen may warn — More info → Run anyway.
+            - macOS: unzip and open the app. Gatekeeper may warn — right-click → Open.
+
+            Bundle includes Tableau `hyperd` (~300MB). Hosted biescape.com stays list-only for Hyper.
+          files: release-assets/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

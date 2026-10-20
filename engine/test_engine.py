@@ -302,6 +302,52 @@ def test_csv_to_xlsx_and_hyper_listed_not_converted() -> None:
     assert all("sales.hyper" != sheet for sheet in inv2.converted_sheets)
 
 
+def test_standalone_hyper_and_tdsx_extract(monkeypatch: pytest.MonkeyPatch) -> None:
+    from openpyxl import load_workbook
+
+    from engine.extract import extract_to_xlsx
+    from engine.hyper import hyper_conversion_enabled
+    from engine.schema import WorkbookParseError
+
+    monkeypatch.delenv("VERCEL", raising=False)
+    hyper_path = ROOT / "samples" / "tiny_extract.hyper"
+    assert hyper_path.is_file()
+
+    if hyper_conversion_enabled():
+        xlsx, inv = extract_to_xlsx(hyper_path)
+        assert any(m.kind == "hyper" for m in inv.hyper_files)
+        assert any("Extract" in s for s in inv.converted_sheets)
+        book = load_workbook(io.BytesIO(xlsx), read_only=True)
+        try:
+            data_sheets = [n for n in book.sheetnames if n != "Hyper files"]
+            assert data_sheets
+            rows = list(book[data_sheets[0]].iter_rows(values_only=True))
+            assert rows[0][:2] == ("Region", "Sales")
+        finally:
+            book.close()
+
+    # .tdsx = zip with hyper, no .twb — extract must not require TWB
+    tdsx = io.BytesIO()
+    with zipfile.ZipFile(tdsx, "w") as zf:
+        zf.writestr("Data/Extracts/tiny.hyper", hyper_path.read_bytes())
+    tdsx_bytes = tdsx.getvalue()
+    # filename matters for kind detection when calling via path-like isn't available
+    class _NamedBytes(io.BytesIO):
+        name = "pack.tdsx"
+
+    named = _NamedBytes(tdsx_bytes)
+    if hyper_conversion_enabled():
+        xlsx2, inv2 = extract_to_xlsx(named)
+        assert inv2.hyper_files
+        assert any("tiny" in s.lower() or "Extract" in s for s in inv2.converted_sheets)
+
+    # Transpile still rejects TDSX without TWB
+    from engine import transpile
+
+    with pytest.raises(WorkbookParseError):
+        transpile(named)
+
+
 def test_tiny_hyper_converts_locally_skipped_on_vercel(monkeypatch: pytest.MonkeyPatch) -> None:
     from openpyxl import load_workbook
 

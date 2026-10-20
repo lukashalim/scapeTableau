@@ -57,28 +57,29 @@ export const LANDING_PAGES: LandingPage[] = [
     slug: "twbx-to-excel",
     title: "Convert TWBX packaged tables to Excel | BIEscape",
     description:
-      "Extract CSV, TSV, XLS, and XLSX files packaged inside a Tableau .twbx into a downloadable Excel workbook. Hyper extracts are listed but not converted.",
-    h1: "TWBX to Excel: packaged tables, not Hyper",
-    lede: "BIEscape unpacks tabular files inside a .twbx into one .xlsx. Custom SQL is copied onto extra sheets and is not executed. Embedded .hyper extracts are listed only.",
+      "Extract CSV, TSV, XLS, and XLSX files packaged inside a Tableau .twbx into a downloadable Excel workbook. For Hyper extracts, download the free BIEscape desktop converter.",
+    h1: "TWBX to Excel: packaged tables + desktop Hyper",
+    lede: "BIEscape unpacks CSV/TSV/XLS/XLSX inside a .twbx into one .xlsx in the browser. Hyper needs Tableau’s hyperd engine — download the free BIEscape Converter for Windows and macOS.",
     capabilities: [
-      "Convert packaged CSV / TSV / XLS / XLSX members into a downloadable .xlsx.",
+      "Convert packaged CSV / TSV / XLS / XLSX members into a downloadable .xlsx in the browser.",
       "Copy Custom SQL text onto extra sheets (not run against a warehouse).",
-      "Inventory archive members, including .hyper paths.",
+      "Download BIEscape Converter from GitHub Releases for .hyper / .twbx / .tdsx → Excel on your computer.",
     ],
     limitations: [
-      ".hyper extracts are listed but not converted to Excel on this site or on Vercel.",
-      "A plain .twb has no packaged tables. Use a .twbx that includes CSV/XLSX extracts.",
+      ".hyper cannot be converted in the browser or on Vercel (hyperd is too large for serverless).",
+      "Desktop builds are unsigned v1 — macOS Gatekeeper and Windows SmartScreen may warn (Open anyway).",
+      "A plain .twb has no packaged tables. Use a .twbx that includes CSV/XLSX extracts, or a .hyper/.tdsx in the desktop app.",
     ],
     faqs: [
       {
         question: "Can BIEscape turn a TWBX into Excel?",
         answer:
-          "It can turn packaged CSV, TSV, XLS, and XLSX files inside the .twbx into a downloadable .xlsx. That is not a Hyper-to-Excel converter.",
+          "Yes for packaged CSV, TSV, XLS, and XLSX inside the .twbx. For .hyper extracts, download the free desktop converter from GitHub Releases.",
       },
       {
         question: "Are .hyper extracts converted?",
         answer:
-          "Not on this site or on Vercel — Hyper needs Tableau's hyperd process, which is too large for serverless. Files are listed so you can see they exist. The open-source CLI/Streamlit app can convert locally if you install optional tableauhyperapi.",
+          "Not in the browser. Download BIEscape Converter from https://github.com/lukashalim/scapeTableau/releases/latest (Windows x64 and macOS arm64 zips). Unsigned v1 may trigger Gatekeeper or SmartScreen — Open anyway.",
       },
       {
         question: "Does Custom SQL run?",

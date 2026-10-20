@@ -1,4 +1,4 @@
-"""In-memory .twbx extract → openpyxl workbook bytes (optional local Hyper conversion)."""
+"""In-memory .twbx/.tdsx/.hyper extract → openpyxl workbook bytes."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 import zipfile
 from pathlib import Path
 from typing import BinaryIO
+from xml.etree import ElementTree as ET
 
 from openpyxl import Workbook, load_workbook
 
@@ -17,20 +18,28 @@ from engine.hyper import (
     read_hyper_bytes,
     sheet_title_for,
 )
-from engine.parser import Source, _is_zip, _read_bytes, list_archive_members, parse_workbook
+from engine.parser import (
+    Source,
+    _is_zip,
+    _local_tag,
+    _read_bytes,
+    is_hyper_bytes,
+    list_archive_members,
+    parse_workbook,
+)
 from engine.schema import ArchiveMember, CustomSqlEntry, ExtractInventory, WorkbookParseError
 
 HYPER_NOTE_VERCEL = (
     "Hyper extracts are listed only on Vercel / the hosted site. "
-    "tableauhyperapi (hyperd) is too large for serverless; convert locally with the CLI or Streamlit."
+    "Download the free BIEscape desktop converter for Excel on your computer."
 )
 HYPER_NOTE_LOCAL_OK = (
-    "Hyper extracts were converted locally via optional tableauhyperapi "
+    "Hyper extracts were converted locally via tableauhyperapi "
     "(temp file for hyperd, deleted after read; 100k row cap)."
 )
 HYPER_NOTE_LOCAL_SKIP = (
-    "Hyper extracts are listed only. Install optional tableauhyperapi to convert locally "
-    "(not used when VERCEL is set)."
+    "Hyper extracts are listed only. Install optional tableauhyperapi to convert locally, "
+    "or use the BIEscape desktop converter (not used when VERCEL is set)."
 )
 
 
@@ -107,7 +116,10 @@ def build_inventory_from_parts(
     elif not tabular and not custom_sql and hyper and not any(
         s for s in (converted_sheets or []) if "Extract" in s or "hyper" in s.lower()
     ):
-        notes.append("This package is Hyper-only for data files; convert locally or download raw .hyper.")
+        notes.append(
+            "This package is Hyper-only for data files; use the BIEscape desktop converter "
+            "or convert locally with tableauhyperapi."
+        )
     elif not tabular and not custom_sql and not hyper:
         notes.append("No embedded CSV/TSV/XLS/XLSX tables were found to convert.")
     return ExtractInventory(
@@ -131,30 +143,36 @@ def build_inventory(source: Source | None = None, *, workbook=None) -> ExtractIn
     return build_inventory_from_parts(list(parsed.archive_members), custom)
 
 
-def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, ExtractInventory]:
-    data, filename = _read_bytes(source)
-    if not data:
-        raise WorkbookParseError("Workbook is empty")
-    parsed = parse_workbook(data)
+def _custom_sql_from_twb(twb_bytes: bytes) -> list[CustomSqlEntry]:
+    try:
+        root = ET.fromstring(twb_bytes)
+    except ET.ParseError:
+        return []
+    entries: list[CustomSqlEntry] = []
+    for ds_el in root.iter():
+        if _local_tag(ds_el.tag) != "datasource":
+            continue
+        ds_caption = ds_el.get("caption") or ds_el.get("name") or ""
+        for rel in ds_el.iter():
+            if _local_tag(rel.tag) != "relation":
+                continue
+            if (rel.get("type") or "").lower() != "text":
+                continue
+            sql = (rel.text or "").strip()
+            if not sql:
+                continue
+            entries.append(
+                CustomSqlEntry(name=rel.get("name"), datasource=ds_caption, sql=sql)
+            )
+    return entries
 
-    members: list[ArchiveMember] = list(parsed.archive_members)
-    zip_bytes = data if _is_zip(data, filename) else None
-    if zip_bytes is not None and not members:
-        members = list_archive_members(zip_bytes)
 
-    custom = [
-        CustomSqlEntry(name=rel.name, datasource=ds.caption or ds.name, sql=rel.custom_sql)
-        for ds in parsed.datasources
-        for rel in ds.relations
-        if rel.custom_sql
-    ]
-
+def _new_workbook():
     wb = Workbook()
     used: set[str] = set()
     default = wb.active
     assert default is not None
     converted: list[str] = []
-    notes: list[str] = []
     first_sheet_used = False
 
     def next_ws(title: str):
@@ -165,6 +183,137 @@ def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, Extra
             first_sheet_used = True
             return default
         return wb.create_sheet(name)
+
+    return wb, default, used, converted, next_ws, lambda: first_sheet_used
+
+
+def _append_hyper_payload(
+    *,
+    path: str,
+    payload: bytes,
+    size: int,
+    next_ws,
+    converted: list[str],
+    notes: list[str],
+    index_rows: list[list[object]],
+) -> bool:
+    """Convert one Hyper blob; return True if any table sheet was written."""
+
+    can_convert = hyper_conversion_enabled()
+    if not can_convert:
+        index_rows.append(
+            [
+                path,
+                size,
+                "Listed only — not converted (Vercel or missing tableauhyperapi)",
+            ]
+        )
+        return False
+    result = read_hyper_bytes(payload)
+    if result.error and not result.tables:
+        index_rows.append([path, size, f"Listed only — {result.error}"])
+        notes.append(f"{path}: {result.error}")
+        return False
+    wrote = False
+    for table in result.tables:
+        title = sheet_title_for(path, table.schema, table.table)
+        ws = next_ws(title)
+        if table.columns:
+            ws.append(list(table.columns))
+        _write_rows(ws, table.rows)
+        converted.append(ws.title)
+        wrote = True
+        note = f"Converted ({table.schema}.{table.table})"
+        if table.truncated:
+            note += f"; truncated at {MAX_ROWS} rows"
+            notes.append(f"{path}: truncated at {MAX_ROWS} rows")
+        index_rows.append([path, size, note])
+    if result.error:
+        notes.append(f"{path}: {result.error}")
+    return wrote
+
+
+def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, ExtractInventory]:
+    data, filename = _read_bytes(source)
+    if not data:
+        raise WorkbookParseError("Workbook is empty")
+
+    # Standalone .hyper — skip XML / zip parse entirely
+    if is_hyper_bytes(data, filename) and not _is_zip(data, filename):
+        path = filename or "extract.hyper"
+        member = ArchiveMember(path=path, size=len(data), kind="hyper")
+        wb, _default, _used, converted, next_ws, first_used = _new_workbook()
+        notes: list[str] = []
+        index_rows: list[list[object]] = [["Path", "Size", "Note"]]
+        hyper_converted = _append_hyper_payload(
+            path=path,
+            payload=data,
+            size=len(data),
+            next_ws=next_ws,
+            converted=converted,
+            notes=notes,
+            index_rows=index_rows,
+        )
+        ws = next_ws("Hyper files")
+        for row in index_rows:
+            ws.append(row)
+        converted.append(ws.title)
+        if hyper_converted:
+            notes.append(HYPER_NOTE_LOCAL_OK)
+        else:
+            notes.append(HYPER_NOTE_VERCEL if os.environ.get("VERCEL") else HYPER_NOTE_LOCAL_SKIP)
+        if not first_used():
+            pass
+        inventory = build_inventory_from_parts(
+            [member], [], converted_sheets=converted, extra_notes=notes
+        )
+        out = io.BytesIO()
+        wb.save(out)
+        return out.getvalue(), inventory
+
+    zip_bytes = data if _is_zip(data, filename) else None
+    members: list[ArchiveMember] = []
+    custom: list[CustomSqlEntry] = []
+
+    if zip_bytes is not None:
+        members = list_archive_members(zip_bytes)
+        twb_members = [m for m in members if m.kind == "twb"]
+        if twb_members:
+            try:
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                    twb_bytes = zf.read(twb_members[0].path)
+                # Prefer full parse when TWB exists (custom SQL + captions)
+                try:
+                    parsed = parse_workbook(source)
+                    members = list(parsed.archive_members) or members
+                    custom = [
+                        CustomSqlEntry(
+                            name=rel.name,
+                            datasource=ds.caption or ds.name,
+                            sql=rel.custom_sql,
+                        )
+                        for ds in parsed.datasources
+                        for rel in ds.relations
+                        if rel.custom_sql
+                    ]
+                except WorkbookParseError:
+                    custom = _custom_sql_from_twb(twb_bytes)
+            except KeyError:
+                pass
+        # .tdsx / zip without TWB: members from archive listing only
+    else:
+        # Plain .twb
+        parsed = parse_workbook(data)
+        members = list(parsed.archive_members)
+        custom = [
+            CustomSqlEntry(name=rel.name, datasource=ds.caption or ds.name, sql=rel.custom_sql)
+            for ds in parsed.datasources
+            for rel in ds.relations
+            if rel.custom_sql
+        ]
+
+    wb, default, used, converted, next_ws, first_used = _new_workbook()
+    notes = []
 
     if zip_bytes is not None:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -204,56 +353,40 @@ def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, Extra
     hyper = [m for m in members if m.kind == "hyper"]
     hyper_converted = False
     if hyper:
-        can_convert = hyper_conversion_enabled()
         index_rows: list[list[object]] = [["Path", "Size", "Note"]]
-        if zip_bytes is not None and can_convert:
+        if zip_bytes is not None:
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
                 for item in hyper:
                     payload = zf.read(item.path)
-                    result = read_hyper_bytes(payload)
-                    if result.error and not result.tables:
-                        index_rows.append([item.path, item.size, f"Listed only — {result.error}"])
-                        notes.append(f"{item.path}: {result.error}")
-                        continue
-                    for table in result.tables:
-                        title = sheet_title_for(item.path, table.schema, table.table)
-                        ws = next_ws(title)
-                        if table.columns:
-                            ws.append(list(table.columns))
-                        _write_rows(ws, table.rows)
-                        converted.append(ws.title)
+                    if _append_hyper_payload(
+                        path=item.path,
+                        payload=payload,
+                        size=item.size,
+                        next_ws=next_ws,
+                        converted=converted,
+                        notes=notes,
+                        index_rows=index_rows,
+                    ):
                         hyper_converted = True
-                        note = f"Converted ({table.schema}.{table.table})"
-                        if table.truncated:
-                            note += f"; truncated at {MAX_ROWS} rows"
-                            notes.append(f"{item.path}: truncated at {MAX_ROWS} rows")
-                        index_rows.append([item.path, item.size, note])
-                    if result.error:
-                        notes.append(f"{item.path}: {result.error}")
         else:
             for item in hyper:
-                if can_convert:
-                    index_rows.append([item.path, item.size, "Listed only — not packaged in zip"])
-                else:
-                    index_rows.append(
-                        [
-                            item.path,
-                            item.size,
-                            "Listed only — not converted (Vercel or missing tableauhyperapi)",
-                        ]
-                    )
+                index_rows.append(
+                    [
+                        item.path,
+                        item.size,
+                        "Listed only — Hyper member without archive bytes",
+                    ]
+                )
         ws = next_ws("Hyper files")
         for row in index_rows:
             ws.append(row)
         converted.append(ws.title)
         if hyper_converted:
             notes.append(HYPER_NOTE_LOCAL_OK)
-        elif can_convert:
-            notes.append(HYPER_NOTE_LOCAL_SKIP)
         else:
             notes.append(HYPER_NOTE_VERCEL if os.environ.get("VERCEL") else HYPER_NOTE_LOCAL_SKIP)
 
-    if not first_sheet_used:
+    if not first_used():
         default.title = _safe_sheet_name("Extract", used)
         default.append(["Note"])
         default.append(["No embedded CSV/TSV/XLS/XLSX tables were converted."])

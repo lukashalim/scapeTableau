@@ -15,6 +15,7 @@ from openpyxl import Workbook, load_workbook
 from engine.hyper import (
     MAX_ROWS,
     hyper_conversion_enabled,
+    preferred_sheet_names_for_hyper,
     read_hyper_bytes,
     sheet_title_for,
 )
@@ -27,7 +28,13 @@ from engine.parser import (
     list_archive_members,
     parse_workbook,
 )
-from engine.schema import ArchiveMember, CustomSqlEntry, ExtractInventory, WorkbookParseError
+from engine.schema import (
+    ArchiveMember,
+    CustomSqlEntry,
+    DatasourceInfo,
+    ExtractInventory,
+    WorkbookParseError,
+)
 
 HYPER_NOTE_VERCEL = (
     "Browser extract cannot convert Hyper (hyperd is too large for serverless). "
@@ -196,6 +203,7 @@ def _append_hyper_payload(
     converted: list[str],
     notes: list[str],
     index_rows: list[list[object]],
+    datasources: list[DatasourceInfo] | None = None,
 ) -> bool:
     """Convert one Hyper blob; return True if any table sheet was written."""
 
@@ -214,16 +222,20 @@ def _append_hyper_payload(
         index_rows.append([path, size, f"Listed only — {result.error}"])
         notes.append(f"{path}: {result.error}")
         return False
+    preferred = preferred_sheet_names_for_hyper(
+        list(datasources or []), path, result.tables
+    )
     wrote = False
-    for table in result.tables:
-        title = sheet_title_for(path, table.schema, table.table)
+    for idx, table in enumerate(result.tables):
+        pref = preferred[idx] if idx < len(preferred) else None
+        title = sheet_title_for(path, table.schema, table.table, preferred=pref)
         ws = next_ws(title)
         if table.columns:
             ws.append(list(table.columns))
         _write_rows(ws, table.rows)
         converted.append(ws.title)
         wrote = True
-        note = f"Converted ({table.schema}.{table.table})"
+        note = f"Converted ({table.schema}.{table.table} → {ws.title})"
         if table.truncated:
             note += f"; truncated at {MAX_ROWS} rows"
             notes.append(f"{path}: truncated at {MAX_ROWS} rows")
@@ -274,6 +286,7 @@ def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, Extra
     zip_bytes = data if _is_zip(data, filename) else None
     members: list[ArchiveMember] = []
     custom: list[CustomSqlEntry] = []
+    datasources: list[DatasourceInfo] = []
 
     if zip_bytes is not None:
         members = list_archive_members(zip_bytes)
@@ -282,10 +295,13 @@ def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, Extra
             try:
                 with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
                     twb_bytes = zf.read(twb_members[0].path)
-                # Prefer full parse when TWB exists (custom SQL + captions)
+                # Prefer full parse when TWB exists (custom SQL + captions).
+                # Parse twb_bytes (not source) — BytesIO sources may already be consumed.
                 try:
-                    parsed = parse_workbook(source)
-                    members = list(parsed.archive_members) or members
+                    parsed = parse_workbook(twb_bytes)
+                    if parsed.archive_members:
+                        members = list(parsed.archive_members)
+                    datasources = list(parsed.datasources)
                     custom = [
                         CustomSqlEntry(
                             name=rel.name,
@@ -305,6 +321,7 @@ def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, Extra
         # Plain .twb
         parsed = parse_workbook(data)
         members = list(parsed.archive_members)
+        datasources = list(parsed.datasources)
         custom = [
             CustomSqlEntry(name=rel.name, datasource=ds.caption or ds.name, sql=rel.custom_sql)
             for ds in parsed.datasources
@@ -366,6 +383,7 @@ def extract_to_xlsx(source: str | Path | bytes | BinaryIO) -> tuple[bytes, Extra
                         converted=converted,
                         notes=notes,
                         index_rows=index_rows,
+                        datasources=datasources,
                     ):
                         hyper_converted = True
         else:

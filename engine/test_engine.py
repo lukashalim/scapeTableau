@@ -302,6 +302,49 @@ def test_csv_to_xlsx_and_hyper_listed_not_converted() -> None:
     assert all("sales.hyper" != sheet for sheet in inv2.converted_sheets)
 
 
+def test_twbx_hyper_sheet_uses_relation_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """TWB relation name wins over Hyper Extract / TableauTemp table ids."""
+    pytest.importorskip("tableauhyperapi")
+    from openpyxl import load_workbook
+
+    from engine.extract import extract_to_xlsx
+    from engine.hyper import hyper_conversion_enabled
+
+    monkeypatch.delenv("VERCEL", raising=False)
+    if not hyper_conversion_enabled():
+        pytest.skip("tableauhyperapi unavailable")
+
+    hyper_path = ROOT / "samples" / "tiny_extract.hyper"
+    twb = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook>
+  <datasources>
+    <datasource caption='Amazon Sales' inline='true' name='federated.sales'>
+      <connection class='hyper' dbname='Data/Extracts/Extract.hyper' />
+      <relation name='Orders' table='[Extract].[Extract]' type='table' />
+      <column caption='Region' name='[Region]' role='dimension' />
+    </datasource>
+  </datasources>
+</workbook>
+"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("sales.twb", twb)
+        zf.writestr("Data/Extracts/Extract.hyper", hyper_path.read_bytes())
+    class _Named(io.BytesIO):
+        name = "sales.twbx"
+
+    xlsx, inv = extract_to_xlsx(_Named(buf.getvalue()))
+    assert "Orders" in inv.converted_sheets
+    assert all("TableauTemp" not in s and "Extract_Extract" not in s for s in inv.converted_sheets)
+    book = load_workbook(io.BytesIO(xlsx), read_only=True)
+    try:
+        assert "Orders" in book.sheetnames
+        rows = list(book["Orders"].iter_rows(values_only=True))
+        assert rows[0][:2] == ("Region", "Sales")
+    finally:
+        book.close()
+
+
 def test_convert_cli_sidecar_writes_xlsx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("tableauhyperapi")
     from engine.hyper import hyper_conversion_enabled
@@ -317,6 +360,76 @@ def test_convert_cli_sidecar_writes_xlsx(tmp_path: Path, monkeypatch: pytest.Mon
     code = convert_main([str(hyper_path), str(out)])
     assert code == 0
     assert out.is_file() and out.stat().st_size > 0
+
+
+def test_hyper_sheet_title_skips_tableau_temp() -> None:
+    from engine.hyper import (
+        HyperTableRows,
+        preferred_sheet_names_for_hyper,
+        sheet_title_for,
+    )
+    from engine.schema import ConnectionInfo, DatasourceInfo, RelationInfo
+
+    assert sheet_title_for(
+        "Data/Extracts/Extract.hyper",
+        "Extract",
+        "#TableauTemp_0rpujo703as6kc17x6",
+    ) == "Extract"
+    assert (
+        sheet_title_for(
+            "Data/Extracts/sales_extract.hyper",
+            "Extract",
+            "TableauTemp_abc",
+        )
+        == "sales_extract"
+    )
+    assert (
+        sheet_title_for(
+            "x.hyper",
+            "Extract",
+            "#TableauTemp_x",
+            preferred="Orders",
+        )
+        == "Orders"
+    )
+
+    ds = DatasourceInfo(
+        name="federated.1",
+        caption="Amazon Sales",
+        connections=[
+            ConnectionInfo(
+                **{"class": "hyper", "dbname": "Data/Extracts/Extract.hyper"}
+            )
+        ],
+        relations=[
+            RelationInfo(
+                name="Orders",
+                type="table",
+                table="[Extract].[#TableauTemp_0rpujo703as6kc17x6]",
+            )
+        ],
+    )
+    tables = [
+        HyperTableRows(
+            schema="Extract",
+            table="#TableauTemp_0rpujo703as6kc17x6",
+            columns=["a"],
+            rows=[],
+        )
+    ]
+    prefs = preferred_sheet_names_for_hyper(
+        [ds], "Data/Extracts/Extract.hyper", tables
+    )
+    assert prefs == ["Orders"]
+    assert (
+        sheet_title_for(
+            "Data/Extracts/Extract.hyper",
+            tables[0].schema,
+            tables[0].table,
+            preferred=prefs[0],
+        )
+        == "Orders"
+    )
 
 
 def test_hyper_date_timestamp_cell_values_excel_safe() -> None:
@@ -355,11 +468,13 @@ def test_standalone_hyper_and_tdsx_extract(monkeypatch: pytest.MonkeyPatch) -> N
     if hyper_conversion_enabled():
         xlsx, inv = extract_to_xlsx(hyper_path)
         assert any(m.kind == "hyper" for m in inv.hyper_files)
-        assert any("Extract" in s for s in inv.converted_sheets)
+        # Standalone .hyper → zip member stem (not Extract_Extract)
+        assert "tiny_extract" in inv.converted_sheets
+        assert all("TableauTemp" not in s for s in inv.converted_sheets)
         book = load_workbook(io.BytesIO(xlsx), read_only=True)
         try:
             data_sheets = [n for n in book.sheetnames if n != "Hyper files"]
-            assert data_sheets
+            assert data_sheets == ["tiny_extract"]
             rows = list(book[data_sheets[0]].iter_rows(values_only=True))
             assert rows[0][:2] == ("Region", "Sales")
         finally:
@@ -378,7 +493,8 @@ def test_standalone_hyper_and_tdsx_extract(monkeypatch: pytest.MonkeyPatch) -> N
     if hyper_conversion_enabled():
         xlsx2, inv2 = extract_to_xlsx(named)
         assert inv2.hyper_files
-        assert any("tiny" in s.lower() or "Extract" in s for s in inv2.converted_sheets)
+        assert "tiny" in inv2.converted_sheets
+        assert all("TableauTemp" not in s for s in inv2.converted_sheets)
 
     # Transpile still rejects TDSX without TWB
     from engine import transpile
@@ -404,10 +520,12 @@ def test_tiny_hyper_converts_locally_skipped_on_vercel(monkeypatch: pytest.Monke
     monkeypatch.delenv("VERCEL", raising=False)
     if hyper_conversion_enabled():
         xlsx, inv = extract_to_xlsx(payload)
-        assert any("tiny_extract_Extract_Extract" == s for s in inv.converted_sheets)
+        # TWB has CSV relations only — do not steal "Orders"; use hyper stem.
+        assert "tiny_extract" in inv.converted_sheets
+        assert "Orders" not in inv.converted_sheets
         book = load_workbook(io.BytesIO(xlsx), read_only=True)
         try:
-            rows = list(book["tiny_extract_Extract_Extract"].iter_rows(values_only=True))
+            rows = list(book["tiny_extract"].iter_rows(values_only=True))
             assert rows[0][:2] == ("Region", "Sales")
             regions = {row[0] for row in rows[1:]}
             assert regions == {"West", "East"}
@@ -417,7 +535,7 @@ def test_tiny_hyper_converts_locally_skipped_on_vercel(monkeypatch: pytest.Monke
 
     monkeypatch.setenv("VERCEL", "1")
     xlsx_v, inv_v = extract_to_xlsx(payload)
-    assert all("tiny_extract_Extract_Extract" != s for s in inv_v.converted_sheets)
+    assert "tiny_extract" not in inv_v.converted_sheets
     assert any(
         "Browser extract cannot convert Hyper" in n or "desktop" in n.lower() or "listed only" in n.lower()
         for n in inv_v.notes
@@ -425,7 +543,7 @@ def test_tiny_hyper_converts_locally_skipped_on_vercel(monkeypatch: pytest.Monke
     book_v = load_workbook(io.BytesIO(xlsx_v), read_only=True)
     try:
         assert "Hyper files" in book_v.sheetnames
-        assert "tiny_extract_Extract_Extract" not in book_v.sheetnames
+        assert "tiny_extract" not in book_v.sheetnames
     finally:
         book_v.close()
 

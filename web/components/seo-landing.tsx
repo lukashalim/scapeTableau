@@ -5,7 +5,7 @@ import { SiteFooter } from "@/components/site-footer";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { LandingPage } from "@/lib/site";
-import { GITHUB_URL } from "@/lib/site";
+import { DESKTOP_RELEASE_URL, GITHUB_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 interface SeoLandingProps {
@@ -26,7 +26,7 @@ export function SeoLanding({ page }: SeoLandingProps) {
             </Link>
             {page.slug === "twbx-to-excel" ? (
               <a
-                href={`${GITHUB_URL}/releases/latest`}
+                href={DESKTOP_RELEASE_URL}
                 target="_blank"
                 rel="noreferrer"
                 className={cn(buttonVariants({ size: "lg" }))}
@@ -86,7 +86,7 @@ export function SeoLanding({ page }: SeoLandingProps) {
             <>
               For Hyper extracts, download{" "}
               <a
-                href={`${GITHUB_URL}/releases/latest`}
+                href={DESKTOP_RELEASE_URL}
                 className="underline underline-offset-4"
                 target="_blank"
                 rel="noreferrer"
@@ -97,7 +97,16 @@ export function SeoLanding({ page }: SeoLandingProps) {
             </>
           ) : (
             <>
-              .hyper extracts are listed but not converted in the browser. Clone the repo at{" "}
+              Hyper → Excel uses the{" "}
+              <a
+                href={DESKTOP_RELEASE_URL}
+                className="underline underline-offset-4"
+                target="_blank"
+                rel="noreferrer"
+              >
+                desktop converter
+              </a>
+              . Clone the repo at{" "}
               <a href={GITHUB_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
                 {GITHUB_URL}
               </a>

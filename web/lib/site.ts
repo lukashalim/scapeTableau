@@ -1,6 +1,7 @@
 export const SITE_URL = "https://www.biescape.com";
 export const SITE_NAME = "BIEscape";
 export const GITHUB_URL = "https://github.com/lukashalim/scapeTableau";
+export const DESKTOP_RELEASE_URL = `${GITHUB_URL}/releases/latest`;
 
 export interface FaqItem {
   question: string;
@@ -117,7 +118,7 @@ export const LANDING_PAGES: LandingPage[] = [
       {
         question: "Does this include live data?",
         answer:
-          "No. Wireframes are layout only. Data extracts are handled separately (tabular files to Excel; Hyper listed only).",
+          "No. Wireframes are layout only. Data extracts are handled separately (tabular files to Excel in the browser; Hyper via the desktop converter).",
       },
     ],
   },
@@ -164,12 +165,12 @@ export const LANDING_PAGES: LandingPage[] = [
     lede: "A Power BI migration still needs a PBIX and Power Query. BIEscape gives you the Tableau side of that work: SQL and DAX from calculated fields, Excel from packaged CSV/XLSX, and a schema inspect. It does not generate a Power BI file.",
     capabilities: [
       "SQL and DAX transpile of Tableau calculated fields for warehouse views or Power BI measures.",
-      "Excel extract of CSV/XLSX packaged in the twbx (not Hyper).",
+      "Excel extract of CSV/XLSX packaged in the twbx; Hyper via the free desktop converter.",
       "Schema inspect: columns, hidden fields, parameters, dashboard wireframes.",
     ],
     limitations: [
       "BIEscape does not emit PBIX, PBIT, or Power Query M. LOD expressions stay as DAX TODO comments.",
-      "Hyper extracts are listed but not converted.",
+      "Browser extract does not convert .hyper — download BIEscape Converter from GitHub Releases.",
     ],
     faqs: [
       {
@@ -199,7 +200,7 @@ export const LANDING_PAGES: LandingPage[] = [
     capabilities: [
       "ANSI SQL from Tableau calculated fields as a starting point for LookML sql: fields or warehouse views.",
       "Schema inspect of datasources, hidden columns, and parameters.",
-      "Excel extract of packaged CSV/XLSX (not Hyper).",
+      "Excel extract of packaged CSV/XLSX; Hyper via the desktop converter.",
     ],
     limitations: [
       "BIEscape does not emit LookML, looks, or Looker dashboards.",
@@ -232,12 +233,12 @@ export const LANDING_PAGES: LandingPage[] = [
     lede: "Amazon QuickSight analyses are not generated here. BIEscape pulls Tableau calculations into SQL, packaged CSV/XLSX into Excel, and schema into an inspect view so you can rebuild datasets in QuickSight.",
     capabilities: [
       "SQL transpile of calculated fields for Athena/Redshift/warehouse datasets.",
-      "Excel extract of packaged CSV/XLSX in the twbx (not Hyper).",
+      "Excel extract of packaged CSV/XLSX in the twbx; Hyper via the desktop converter.",
       "Schema and dashboard wireframe inspect for layout reference.",
     ],
     limitations: [
       "BIEscape does not emit QuickSight JSON, analyses, dashboards, or templates.",
-      "Hyper extracts are listed but not converted.",
+      "Browser extract does not convert .hyper — use BIEscape Converter from GitHub Releases.",
     ],
     faqs: [
       {
@@ -253,7 +254,7 @@ export const LANDING_PAGES: LandingPage[] = [
       {
         question: "Are Hyper extracts included?",
         answer:
-          "They are listed in the extract inventory and are not converted on the hosted engine.",
+          "They are listed in the extract inventory on the site. Convert them with the free BIEscape desktop app from GitHub Releases.",
       },
     ],
   },
@@ -271,7 +272,7 @@ export const LANDING_PAGES: LandingPage[] = [
     ],
     limitations: [
       "FIXED / INCLUDE / EXCLUDE LOD expressions are DAX TODO comments, not CALCULATE/ALLEXCEPT rewrites.",
-      "No PBIX, PBIT, or Power Query M export. Hyper extracts are listed but not converted.",
+      "No PBIX, PBIT, or Power Query M export. Use the desktop converter for Hyper → Excel.",
     ],
     faqs: [
       {
@@ -303,4 +304,4 @@ export const DEFAULT_TITLE =
   "Tableau to Power BI migration tool — open TWBX without Tableau, convert to SQL | BIEscape";
 
 export const DEFAULT_DESCRIPTION =
-  "BIEscape is a Tableau to Power BI migration helper: open a TWBX without Tableau, convert Tableau calculated fields to SQL, extract packaged Excel/CSV, and inspect schema. Hyper extracts are listed but not converted. Not a PBIX, LookML, or QuickSight exporter.";
+  "BIEscape is a Tableau to Power BI migration helper: open a TWBX without Tableau, convert Tableau calculated fields to SQL, extract packaged Excel/CSV, and inspect schema. Hyper → Excel uses the free desktop converter. Not a PBIX, LookML, or QuickSight exporter.";

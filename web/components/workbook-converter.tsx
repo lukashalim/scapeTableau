@@ -29,6 +29,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DESKTOP_RELEASE_URL } from "@/lib/site";
 import type {
   CalculatedField,
   ColumnField,
@@ -116,8 +117,9 @@ function ExtractPanel({
     return <p className="py-8 text-center text-sm text-muted-foreground">No extract inventory on this result.</p>;
   }
 
+  const hasHyper = inventory.hyper_files.length > 0;
   const hyperOnly =
-    inventory.hyper_files.length > 0 && inventory.tabular_files.length === 0 && inventory.custom_sql.length === 0;
+    hasHyper && inventory.tabular_files.length === 0 && inventory.custom_sql.length === 0;
   const noEmbed = inventory.archive_members.length === 0;
 
   return (
@@ -126,21 +128,21 @@ function ExtractPanel({
         <Alert>
           <AlertTitle>No packaged tables</AlertTitle>
           <AlertDescription>
-            This is a plain .twb (or the sample workbook). Custom SQL still appears below. Pack a .twbx with CSV/TSV/XLS/XLSX
-            to convert those files into a downloadable workbook. .hyper extracts are listed but not converted.
+            This is a plain .twb (or the sample workbook). Custom SQL still appears below. Pack a .twbx with
+            CSV/TSV/XLS/XLSX for browser Excel extract, or use a .hyper / .tdsx with the desktop converter.
           </AlertDescription>
         </Alert>
       ) : null}
-      {hyperOnly ? (
+      {hasHyper ? (
         <Alert>
-          <AlertTitle>Hyper-only package</AlertTitle>
+          <AlertTitle>{hyperOnly ? "Hyper-only package" : "Hyper extract detected"}</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>
               Hyper extracts need the Tableau Hyper engine and can&apos;t be converted in the browser.
             </p>
             <p>Download the free desktop converter to turn this into Excel on your computer.</p>
             <a
-              href="https://github.com/lukashalim/scapeTableau/releases/latest"
+              href={DESKTOP_RELEASE_URL}
               target="_blank"
               rel="noreferrer"
               className={cn(buttonVariants({ variant: "default" }), "inline-flex")}
@@ -154,11 +156,13 @@ function ExtractPanel({
           </AlertDescription>
         </Alert>
       ) : null}
-      {inventory.notes.map((note) => (
-        <p key={note} className="text-sm text-muted-foreground">
-          {note}
-        </p>
-      ))}
+      {inventory.notes
+        .filter((note) => !/listed only|not converted/i.test(note) || !hasHyper)
+        .map((note) => (
+          <p key={note} className="text-sm text-muted-foreground">
+            {note}
+          </p>
+        ))}
       <div className="flex justify-end">
         <Button onClick={() => void downloadXlsx()} disabled={busy || !file}>
           {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
@@ -521,7 +525,17 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
             <div className="space-y-1">
               <p className="font-medium">Drop a .twb or .twbx here</p>
               <p className="text-sm text-muted-foreground">
-                or click to browse. Files are not persisted. .hyper extracts are listed but not converted.
+                or click to browse. Files are not persisted. For Hyper → Excel,{" "}
+                <a
+                  href={DESKTOP_RELEASE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-4"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  download the desktop converter
+                </a>
+                .
               </p>
             </div>
           </label>

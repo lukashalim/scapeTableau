@@ -31,7 +31,7 @@ const FEATURES: FeatureRow[] = [
   {
     feature: "Extract Data",
     ships:
-      "Packaged CSV / TSV / XLS / XLSX become a downloadable .xlsx. Custom SQL is copied to extra sheets, not executed. Hyper extracts are listed only on the hosted site (convert locally with optional tableauhyperapi).",
+      "Packaged CSV / TSV / XLS / XLSX become a downloadable .xlsx. Custom SQL is copied to extra sheets, not executed. For Hyper, download the free BIEscape desktop converter.",
   },
   {
     feature: "Inspect Schema",
@@ -81,8 +81,8 @@ export function MarketingHero() {
         </h1>
         <p className="text-lg text-muted-foreground md:text-xl">
           BIEscape extracts Tableau calculated fields, packaged CSV/XLSX, and schema so you can migrate toward Power BI,
-          warehouses, or dbt. It does not emit PBIX, LookML, or QuickSight assets. .hyper extracts are listed but not
-          converted.
+          warehouses, or dbt. It does not emit PBIX, LookML, or QuickSight assets. Hyper → Excel uses the free desktop
+          converter.
         </p>
       </div>
     </section>
@@ -176,7 +176,7 @@ export function MarketingBelow() {
                   <Link href="/twbx-to-excel" className="underline underline-offset-4">
                     TWBX to Excel
                   </Link>
-                  . Hyper stays listed, not converted.
+                  . For Hyper, download the desktop converter.
                 </CardDescription>
               </CardHeader>
             </Card>

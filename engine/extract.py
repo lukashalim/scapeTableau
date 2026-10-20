@@ -30,8 +30,8 @@ from engine.parser import (
 from engine.schema import ArchiveMember, CustomSqlEntry, ExtractInventory, WorkbookParseError
 
 HYPER_NOTE_VERCEL = (
-    "Hyper extracts are listed only on Vercel / the hosted site. "
-    "Download the free BIEscape desktop converter for Excel on your computer."
+    "Browser extract cannot convert Hyper (hyperd is too large for serverless). "
+    "Download BIEscape Converter from GitHub Releases for Excel on your computer."
 )
 HYPER_NOTE_LOCAL_OK = (
     "Hyper extracts were converted locally via tableauhyperapi "

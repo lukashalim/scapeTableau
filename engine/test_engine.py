@@ -379,7 +379,10 @@ def test_tiny_hyper_converts_locally_skipped_on_vercel(monkeypatch: pytest.Monke
     monkeypatch.setenv("VERCEL", "1")
     xlsx_v, inv_v = extract_to_xlsx(payload)
     assert all("tiny_extract_Extract_Extract" != s for s in inv_v.converted_sheets)
-    assert any("Vercel" in n or "listed only" in n.lower() for n in inv_v.notes)
+    assert any(
+        "Browser extract cannot convert Hyper" in n or "desktop" in n.lower() or "listed only" in n.lower()
+        for n in inv_v.notes
+    )
     book_v = load_workbook(io.BytesIO(xlsx_v), read_only=True)
     try:
         assert "Hyper files" in book_v.sheetnames

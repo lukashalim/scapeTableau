@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { buttonVariants } from "@/components/ui/button";
-import { GITHUB_URL, LANDING_PAGES, SITE_URL } from "@/lib/site";
+import { DESKTOP_RELEASE_URL, GITHUB_URL, LANDING_PAGES, SITE_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 export function SiteFooter() {
@@ -12,20 +12,28 @@ export function SiteFooter() {
           Ready to leave the workbook black box?
         </h2>
         <p className="max-w-2xl text-muted-foreground">
-          Try the hosted converter, or clone the repo and run the same engine locally. MIT licensed. .hyper extracts
-          are listed but not converted.
+          Try the hosted converter, clone the repo for CLI/Streamlit, or download the free desktop app for Hyper →
+          Excel. MIT licensed.
         </p>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
           <Link href="/#converter" className={cn(buttonVariants({ size: "lg" }))}>
-            🚀 Try the Web App
+            Try the Web App
           </Link>
+          <a
+            href={DESKTOP_RELEASE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(buttonVariants({ size: "lg" }))}
+          >
+            Download desktop converter
+          </a>
           <a
             href={GITHUB_URL}
             target="_blank"
             rel="noreferrer"
             className={cn(buttonVariants({ variant: "outline", size: "lg" }))}
           >
-            ⭐ Clone the repo
+            Clone the repo
           </a>
         </div>
         <nav aria-label="Landing pages" className="flex flex-wrap gap-x-4 gap-y-2 text-sm">

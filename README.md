@@ -66,7 +66,7 @@ cd scapeTableau
 pip install -r requirements.txt
 ```
 
-`openpyxl` is required for Excel extract. `tableauhyperapi` is an optional extra for local Hyper→Excel (`pip install tableauhyperapi`); it is never required and is not used when `VERCEL` is set. Hosted uploads stay list-only for `.hyper`. Prefer the [desktop Release](https://github.com/lukashalim/scapeTableau/releases/latest) for a no-pip Hyper converter (unsigned v1 — Gatekeeper / SmartScreen may warn).
+`openpyxl` is required for Excel extract. `tableauhyperapi` is an optional extra for local Hyper→Excel (`pip install tableauhyperapi`); it is never required and is not used when `VERCEL` is set. Hosted uploads stay list-only for `.hyper`. Prefer the [Windows installer](https://github.com/lukashalim/scapeTableau/releases/latest/download/BIEscape-Converter-Setup-windows-x64.exe) for a no-pip Hyper converter (unsigned v1 — SmartScreen may warn).
 
 ## Usage
 

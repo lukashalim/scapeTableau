@@ -29,7 +29,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DESKTOP_RELEASE_URL } from "@/lib/site";
+import { DESKTOP_RELEASE_URL, DESKTOP_RELEASES_PAGE } from "@/lib/site";
 import type {
   CalculatedField,
   ColumnField,
@@ -152,7 +152,7 @@ function ExtractPanel({
               Direct .exe download (~300MB with hyperd). Unsigned — SmartScreen may warn (More info → Run anyway).
               macOS zip is on the{" "}
               <a
-                href="https://github.com/lukashalim/scapeTableau/releases/latest"
+                href={DESKTOP_RELEASES_PAGE}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-4"

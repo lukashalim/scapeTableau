@@ -302,6 +302,28 @@ def test_csv_to_xlsx_and_hyper_listed_not_converted() -> None:
     assert all("sales.hyper" != sheet for sheet in inv2.converted_sheets)
 
 
+def test_hyper_date_timestamp_cell_values_excel_safe() -> None:
+    """tableauhyperapi Date has no isoformat — must become datetime.date for openpyxl."""
+    pytest.importorskip("tableauhyperapi")
+    from datetime import date, datetime
+
+    from openpyxl import Workbook
+    from tableauhyperapi import Date, Timestamp
+
+    from engine.hyper import _cell_value
+
+    d = _cell_value(Date(2010, 5, 28))
+    t = _cell_value(Timestamp(2010, 5, 28, 12, 30, 0))
+    assert d == date(2010, 5, 28)
+    assert isinstance(t, datetime)
+    assert t.replace(tzinfo=None) == datetime(2010, 5, 28, 12, 30, 0)
+
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.append([d, t])  # must not raise IllegalWorksheetData
+
+
 def test_standalone_hyper_and_tdsx_extract(monkeypatch: pytest.MonkeyPatch) -> None:
     from openpyxl import load_workbook
 

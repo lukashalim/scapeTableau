@@ -38,6 +38,17 @@ class ConverterApp(tk.Tk):
 
     def _build(self) -> None:
         pad = {"padx": 16, "pady": 8}
+        # Pack bottom chrome first so Convert stays visible when the status box expands.
+        btn_row = ttk.Frame(self)
+        btn_row.pack(side="bottom", fill="x", padx=16, pady=(0, 16))
+        self.convert_btn = ttk.Button(
+            btn_row,
+            text="Convert & Save .xlsx…",
+            command=self.convert_and_save,
+            state="disabled",
+        )
+        self.convert_btn.pack(side="right", ipady=6)
+
         ttk.Label(self, text="BIEscape Converter", font=("Helvetica", 18, "bold")).pack(
             anchor="w", **pad
         )
@@ -64,18 +75,8 @@ class ConverterApp(tk.Tk):
             anchor="w", padx=16
         )
 
-        self.status = tk.Text(self, height=10, wrap="word", state="disabled")
+        self.status = tk.Text(self, height=8, wrap="word", state="disabled")
         self.status.pack(fill="both", expand=True, padx=16, pady=8)
-
-        btn_row = ttk.Frame(self)
-        btn_row.pack(fill="x", padx=16, pady=(0, 16))
-        self.convert_btn = ttk.Button(
-            btn_row,
-            text="Convert & Save .xlsx…",
-            command=self.convert_and_save,
-            state="disabled",
-        )
-        self.convert_btn.pack(side="right")
 
     def _log(self, message: str) -> None:
         self.status.configure(state="normal")
@@ -98,7 +99,7 @@ class ConverterApp(tk.Tk):
         self._source = path
         self.path_var.set(str(path))
         self.convert_btn.configure(state="normal")
-        self._log(f"Ready: {path.name}\nClick Convert & Save .xlsx…")
+        self._log(f"Ready: {path.name}\nUse Convert & Save .xlsx… below.")
 
     def convert_and_save(self) -> None:
         if self._source is None:

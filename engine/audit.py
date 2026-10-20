@@ -26,6 +26,12 @@ def _view_name(field: CalculatedField) -> str:
     return cleaned or "calc"
 
 
+def _datasource_view_name(ds: DatasourceInfo) -> str:
+    base = ds.caption or ds.name
+    cleaned = "".join(ch if ch.isalnum() or ch in {"_", " "} else "_" for ch in base).strip()
+    return cleaned or "datasource"
+
+
 def _primary_relation(ds: DatasourceInfo) -> str:
     from engine.transpiler import normalize_table_name
 
@@ -55,6 +61,18 @@ def _datasource_comment(ds: DatasourceInfo) -> list[str]:
     return lines
 
 
+def _emit_skipped(lines: list[str], field: CalculatedField) -> None:
+    lines.append(
+        f"-- SKIPPED [{field.status.value}] {field.caption}: {field.error or 'see SQL fallback'}"
+    )
+    for sql_line in field.sql.splitlines() or [field.sql]:
+        if sql_line.startswith("--"):
+            lines.append(sql_line)
+        else:
+            lines.append(f"-- {sql_line}")
+    lines.append("")
+
+
 def build_sql_script(
     fields: list[CalculatedField],
     datasources: list[DatasourceInfo],
@@ -63,13 +81,23 @@ def build_sql_script(
     dialect: str = "ansi",
     script_style: str = "sql",
 ) -> str:
+    """Emit one SQL view per datasource at source grain.
+
+    Row-level calcs (and LOD window/subquery expressions) become extra SELECT
+    columns. Bare aggregates go under ``-- Aggregates / LOD`` comments. Failed
+    / unmapped fields stay ``-- SKIPPED``.
+    """
+
     lines: list[str] = [
         "-- EscapeTableau generated SQL",
         "-- Dialect: " + dialect,
     ]
     if workbook_name:
         lines.append(f"-- Source workbook: {workbook_name}")
-    lines.append("-- Files were parsed in memory; review LOD / unmapped functions before running.")
+    lines.append(
+        "-- Files were parsed in memory; review LOD / unmapped functions before running."
+    )
+    lines.append("-- One view per datasource (SELECT * + row-level calc columns).")
     lines.append("")
     for ds in datasources:
         lines.extend(_datasource_comment(ds))
@@ -77,26 +105,81 @@ def build_sql_script(
 
     ds_by_caption = {ds.caption: ds for ds in datasources if ds.caption}
     ds_by_name = {ds.name: ds for ds in datasources}
-    for field in fields:
-        if field.status != ParseStatus.ok:
-            lines.append(f"-- SKIPPED [{field.status.value}] {field.caption}: {field.error or 'see SQL fallback'}")
-            for sql_line in field.sql.splitlines() or [field.sql]:
-                if sql_line.startswith("--"):
-                    lines.append(sql_line)
-                else:
-                    lines.append(f"-- {sql_line}")
-            lines.append("")
+
+    def _fields_for(ds: DatasourceInfo) -> list[CalculatedField]:
+        keys = {ds.name, ds.caption}
+        return [f for f in fields if f.datasource in keys]
+
+    emitted_fields: set[int] = set()
+    for ds in datasources:
+        if (ds.name or "").lower() == "parameters":
             continue
-        view = _sql_ident(_view_name(field))
-        ds = ds_by_name.get(field.datasource) or ds_by_caption.get(field.datasource)
-        from_rel = _primary_relation(ds) if ds else _sql_ident("Orders")
+        group = _fields_for(ds)
+        if not group:
+            continue
+        for field in group:
+            emitted_fields.add(id(field))
+
+        row_fields = [
+            f
+            for f in group
+            if f.status == ParseStatus.ok and (f.sql_kind or "row") == "row"
+        ]
+        agg_fields = [
+            f
+            for f in group
+            if f.status == ParseStatus.ok and f.sql_kind == "aggregate"
+        ]
+        skipped = [f for f in group if f.status != ParseStatus.ok]
+
+        view = _sql_ident(_datasource_view_name(ds))
+        from_rel = _primary_relation(ds)
         if script_style == "dbt":
             lines.append("{{ config(materialized='view') }}")
         lines.append(f"CREATE VIEW {view} AS")
         lines.append("SELECT")
+        select_lines = ["  *"]
+        for field in row_fields:
+            col = _sql_ident(_view_name(field))
+            select_lines.append(f"  {field.sql} AS {col}")
+        lines.append(",\n".join(select_lines))
+        lines.append(f"FROM {from_rel};")
+        lines.append("")
+
+        if agg_fields:
+            lines.append("-- Aggregates / LOD")
+            for field in agg_fields:
+                col = _sql_ident(_view_name(field))
+                lines.append(f"-- {col}: {field.sql}")
+            lines.append("")
+
+        for field in skipped:
+            _emit_skipped(lines, field)
+
+    # Orphan fields (datasource missing from workbook list)
+    for field in fields:
+        if id(field) in emitted_fields:
+            continue
+        if field.status != ParseStatus.ok:
+            _emit_skipped(lines, field)
+            continue
+        ds = ds_by_name.get(field.datasource) or ds_by_caption.get(field.datasource)
+        from_rel = _primary_relation(ds) if ds else _sql_ident("Orders")
+        view = _sql_ident(_view_name(field))
+        if (field.sql_kind or "row") == "aggregate":
+            lines.append("-- Aggregates / LOD")
+            lines.append(f"-- {view}: {field.sql}")
+            lines.append("")
+            continue
+        if script_style == "dbt":
+            lines.append("{{ config(materialized='view') }}")
+        lines.append(f"CREATE VIEW {view} AS")
+        lines.append("SELECT")
+        lines.append("  *,")
         lines.append(f"  {field.sql} AS {view}")
         lines.append(f"FROM {from_rel};")
         lines.append("")
+
     return "\n".join(lines).rstrip() + "\n"
 
 

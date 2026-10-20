@@ -26,7 +26,7 @@ const FEATURES: FeatureRow[] = [
   {
     feature: "dbt-ready SQL views",
     ships:
-      "Emits CREATE VIEW SQL with comments you can drop into a dbt model file. schema.yml is not auto-written; this is not a full dbt package scaffold.",
+      "Emits one CREATE VIEW per datasource (row-level calcs as columns; aggregates as comments) for dbt model files. schema.yml is not auto-written; this is not a full dbt package scaffold.",
   },
   {
     feature: "Extract Data",

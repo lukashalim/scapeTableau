@@ -189,8 +189,42 @@ def test_sample_workbook_round_trip() -> None:
     assert dumped.get("extract_inventory")
 
     assert "CREATE VIEW" in result.sql_script
+    # One view per datasource (not one per calc); row calcs as columns.
+    assert result.sql_script.count("CREATE VIEW") == 2
+    assert 'CREATE VIEW "Sample Superstore" AS' in result.sql_script
+    assert 'CREATE VIEW "West Custom SQL" AS' in result.sql_script
+    assert 'CREATE VIEW "Profit Ratio" AS' not in result.sql_script
+    assert 'COALESCE("Profit", 0) AS "Profit or Zero"' in result.sql_script
+    assert 'SUM("Sales") OVER (PARTITION BY "Region") AS "Regional Sales"' in result.sql_script
+    assert "-- Aggregates / LOD" in result.sql_script
+    assert '-- "Profit Ratio":' in result.sql_script
+    assert '-- "Ratio Abs":' in result.sql_script
+    assert "-- SKIPPED [unparseable] Mystery Metric" in result.sql_script
+    ratio = next(f for f in result.calculated_fields if f.caption == "Profit Ratio")
+    assert ratio.sql_kind == "aggregate"
+    zn_kind = next(f for f in result.calculated_fields if f.caption == "Profit or Zero")
+    assert zn_kind.sql_kind == "row"
+    lod_kind = next(f for f in result.calculated_fields if f.caption == "Regional Sales")
+    assert lod_kind.sql_kind == "row"
     assert "Profit Ratio" in result.markdown_audit
     assert "| Caption |" in result.markdown_audit
+
+
+def test_classify_sql_kind_row_vs_aggregate() -> None:
+    from engine.transpiler import classify_sql_kind, parse_formula
+
+    assert classify_sql_kind(parse_formula("ZN([Profit])")) == "row"
+    assert classify_sql_kind(parse_formula("SUM([Sales])")) == "aggregate"
+    assert classify_sql_kind(parse_formula("ABS(SUM([Profit])/SUM([Sales]))")) == "aggregate"
+    assert (
+        classify_sql_kind(parse_formula("{FIXED [Region]: SUM([Sales])}")) == "row"
+    )
+
+
+def test_dbt_script_one_view_per_datasource() -> None:
+    result = transpile(SAMPLE, script_style="dbt")
+    assert result.sql_script.count("{{ config(materialized='view') }}") == 2
+    assert result.sql_script.count("CREATE VIEW") == 2
 
 
 def test_twbx_bytes_round_trip() -> None:

@@ -184,6 +184,7 @@ class FormulaContext:
     calc_status: dict[str, ParseStatus] = field(default_factory=dict)
     calc_dax_status: dict[str, ParseStatus] = field(default_factory=dict)
     calc_dax_kind: dict[str, str] = field(default_factory=dict)
+    calc_sql_kind: dict[str, str] = field(default_factory=dict)
     view_dims: list[str] | None = None
     source_table: str = "Orders"
     dax_table: str = "Orders"
@@ -667,6 +668,92 @@ def _kind_combine(kinds: list[str]) -> str:
     if "measure" in kinds:
         return "measure"
     return "calculated_column"
+
+
+def _is_table_calc_name(fn: str) -> bool:
+    upper = fn.upper()
+    return any(upper.startswith(p) or upper == p.rstrip("_") for p in TABLE_CALC_PREFIXES)
+
+
+def _lookup_sql_kind(ctx: FormulaContext, name: str) -> str | None:
+    bare = name.strip("[]")
+    for key in (name, bare, f"[{bare}]"):
+        kind = ctx.calc_sql_kind.get(key)
+        if kind:
+            return kind
+    return None
+
+
+def _has_bare_tableau_agg(node: Node) -> bool:
+    """True if a Tableau agg/table-calc appears outside any LOD wrapper."""
+
+    node = _unwrap_node(node)
+    if isinstance(node, LodExpr):
+        return False
+    if isinstance(node, Call):
+        fn = node.name.upper()
+        if fn in AGG_FUNCS or _is_table_calc_name(fn):
+            return True
+        return any(_has_bare_tableau_agg(arg) for arg in node.args)
+    if isinstance(node, UnaryOp):
+        return _has_bare_tableau_agg(node.expr)
+    if isinstance(node, BinaryOp):
+        return _has_bare_tableau_agg(node.left) or _has_bare_tableau_agg(node.right)
+    if isinstance(node, IfExpr):
+        for cond, then in node.branches:
+            if _has_bare_tableau_agg(cond) or _has_bare_tableau_agg(then):
+                return True
+        return bool(node.else_expr and _has_bare_tableau_agg(node.else_expr))
+    if isinstance(node, CaseExpr):
+        if node.expr is not None and _has_bare_tableau_agg(node.expr):
+            return True
+        for cond, then in node.branches:
+            if _has_bare_tableau_agg(cond) or _has_bare_tableau_agg(then):
+                return True
+        return bool(node.else_expr and _has_bare_tableau_agg(node.else_expr))
+    if isinstance(node, Paren):
+        return _has_bare_tableau_agg(node.expr)
+    return False
+
+
+def classify_sql_kind(node: Node, ctx: FormulaContext | None = None) -> str:
+    """Classify a formula for SQL script emission: ``row`` or ``aggregate``.
+
+    - **row**: no bare Tableau agg at the expression root. Includes row helpers and
+      LOD (`{FIXED …}` etc.) which emit ``OVER (…)`` / scalar subqueries at grain.
+    - **aggregate**: bare ``SUM``/``AVG``/…, table calcs, wrappers containing those
+      (e.g. ``ABS(SUM(Profit)/SUM(Sales))``), or a FieldRef to another aggregate calc.
+    """
+
+    ctx = ctx or FormulaContext()
+    node = _unwrap_node(node)
+    if isinstance(node, LodExpr):
+        return "row"
+    if isinstance(node, FieldRef):
+        ref_kind = _lookup_sql_kind(ctx, node.name)
+        return "aggregate" if ref_kind == "aggregate" else "row"
+    if isinstance(node, ParamRef):
+        return "row"
+    if isinstance(node, Call):
+        fn = node.name.upper()
+        if fn in AGG_FUNCS or _is_table_calc_name(fn):
+            return "aggregate"
+        if any(_has_bare_tableau_agg(arg) for arg in node.args):
+            return "aggregate"
+        if any(_lookup_sql_kind(ctx, n.name) == "aggregate" for n in _walk(node) if isinstance(n, FieldRef)):
+            return "aggregate"
+        return "row"
+    if isinstance(node, (UnaryOp, BinaryOp, IfExpr, CaseExpr)):
+        if _has_bare_tableau_agg(node):
+            return "aggregate"
+        if any(
+            _lookup_sql_kind(ctx, n.name) == "aggregate"
+            for n in _walk(node)
+            if isinstance(n, FieldRef)
+        ):
+            return "aggregate"
+        return "row"
+    return "row"
 
 
 def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:

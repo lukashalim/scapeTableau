@@ -20,6 +20,7 @@ from engine.schema import (
 from engine.transpiler import (
     FormulaContext,
     classify_dax_kind,
+    classify_sql_kind,
     field_references,
     normalize_table_name,
     parse_formula,
@@ -150,6 +151,7 @@ def transpile(
         calc_status: dict[str, ParseStatus] = {}
         calc_dax_status: dict[str, ParseStatus] = {}
         calc_dax_kind: dict[str, str] = {}
+        calc_sql_kind: dict[str, str] = {}
         table, dax_table = _source_tables(workbook, ds_name)
 
         for ident in order:
@@ -176,6 +178,7 @@ def transpile(
                 calc_status=calc_status,
                 calc_dax_status=calc_dax_status,
                 calc_dax_kind=calc_dax_kind,
+                calc_sql_kind=calc_sql_kind,
                 view_dims=grain,
                 source_table=table,
                 dax_table=dax_table,
@@ -191,6 +194,7 @@ def transpile(
                 calc_status=calc_status,
                 calc_dax_status=calc_dax_status,
                 calc_dax_kind=calc_dax_kind,
+                calc_sql_kind=calc_sql_kind,
                 view_dims=grain,
                 source_table=table,
                 dax_table=dax_table,
@@ -228,6 +232,11 @@ def transpile(
             kind = "measure"
             if tree is not None:
                 kind = classify_dax_kind(tree, ctx_dax)
+            sql_kind: str | None = None
+            if sql_status == ParseStatus.ok and tree is not None:
+                sql_kind = classify_sql_kind(tree, ctx_sql)
+            elif sql_status == ParseStatus.ok:
+                sql_kind = "row"
             status = sql_status
             error = sql_err
             if target_l == "dax":
@@ -239,6 +248,8 @@ def transpile(
                 calc_status[key] = sql_status
                 calc_dax_status[key] = dax_status
                 calc_dax_kind[key] = kind
+                if sql_kind is not None:
+                    calc_sql_kind[key] = sql_kind
 
             fields.append(
                 CalculatedField(
@@ -254,6 +265,7 @@ def transpile(
                     dax=dax,
                     dax_status=dax_status,
                     dax_kind=kind,
+                    sql_kind=sql_kind,
                 )
             )
 

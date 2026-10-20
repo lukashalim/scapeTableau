@@ -86,9 +86,9 @@ body {
 }
 
 .dropzone {
-  flex: 1;
-  min-height: 220px;
-  max-height: 340px;
+  flex: 0 0 auto;
+  min-height: 160px;
+  max-height: 220px;
   border: 1.5px dashed var(--border-strong);
   border-radius: 14px;
   background: linear-gradient(180deg, #fafbfc 0%, #f4f6f9 100%);
@@ -168,6 +168,130 @@ body {
   text-align: center;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.caption.tight {
+  margin-top: 8px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding: 0 4px;
+}
+
+.tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 500;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab.active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0 4px;
+}
+
+.primary {
+  appearance: none;
+  padding: 11px 20px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sql-pane {
+  flex: 1;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sql-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dialect {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.dialect select {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.sql-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sql-actions .browse {
+  margin-top: 0;
+}
+
+.sql-editor {
+  flex: 1;
+  min-height: 160px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-family: "IBM Plex Mono", "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--ink);
+  background: #f8f9fb;
+  outline: none;
 }
 
 .banner {

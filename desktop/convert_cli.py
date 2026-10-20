@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Headless Hyper/TWBX/TDSX → Excel sidecar for the Electron desktop app.
+"""Headless sidecar for the Electron desktop app.
 
 Usage:
-  python desktop/convert_cli.py INPUT OUTPUT.xlsx
+  python desktop/convert_cli.py convert INPUT OUTPUT.xlsx
+  python desktop/convert_cli.py transpile INPUT --dialect ansi
 
 Prints one JSON line to stdout and exits 0 on success, 1 on failure.
 """
@@ -19,10 +20,13 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from engine import transpile
 from engine.extract import extract_to_xlsx
-from engine.schema import WorkbookParseError
+from engine.schema import ParseStatus, WorkbookParseError
 
-ALLOWED = {".hyper", ".twbx", ".tdsx"}
+CONVERT_ALLOWED = {".hyper", ".twbx", ".tdsx", ".twb"}
+TRANSPILE_ALLOWED = {".twb", ".twbx", ".tdsx", ".hyper"}
+DIALECTS = ("ansi", "snowflake", "postgres", "duckdb")
 
 
 def _emit(payload: dict) -> None:
@@ -30,20 +34,17 @@ def _emit(payload: dict) -> None:
     sys.stdout.flush()
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="BIEscape convert sidecar")
-    parser.add_argument("input", type=Path, help="Path to .hyper / .twbx / .tdsx")
-    parser.add_argument("output", type=Path, help="Destination .xlsx path")
-    args = parser.parse_args(argv)
-
-    source: Path = args.input
-    dest: Path = args.output
-
+def cmd_convert(source: Path, dest: Path) -> int:
     if not source.is_file():
         _emit({"ok": False, "error": f"File not found: {source}"})
         return 1
-    if source.suffix.lower() not in ALLOWED:
-        _emit({"ok": False, "error": "Choose a .hyper, .twbx, or .tdsx file."})
+    if source.suffix.lower() not in CONVERT_ALLOWED:
+        _emit(
+            {
+                "ok": False,
+                "error": "Choose a .hyper, .twbx, .tdsx, or .twb file.",
+            }
+        )
         return 1
 
     try:
@@ -72,6 +73,80 @@ def main(argv: list[str] | None = None) -> int:
         }
     )
     return 0
+
+
+def cmd_transpile(source: Path, dialect: str) -> int:
+    if not source.is_file():
+        _emit({"ok": False, "error": f"File not found: {source}"})
+        return 1
+    if source.suffix.lower() not in TRANSPILE_ALLOWED:
+        _emit(
+            {
+                "ok": False,
+                "error": "Choose a .twb, .twbx, .tdsx, or .hyper file.",
+            }
+        )
+        return 1
+    if dialect not in DIALECTS:
+        _emit({"ok": False, "error": f"Unsupported dialect: {dialect}"})
+        return 1
+
+    try:
+        result = transpile(source, dialect=dialect, target="sql")
+    except WorkbookParseError as exc:
+        _emit({"ok": False, "error": str(exc)})
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        _emit({"ok": False, "error": str(exc), "traceback": traceback.format_exc()})
+        return 1
+
+    skipped = [
+        {
+            "caption": f.caption,
+            "status": f.status.value,
+            "error": f.error,
+        }
+        for f in result.calculated_fields
+        if f.status != ParseStatus.ok
+    ]
+    _emit(
+        {
+            "ok": True,
+            "sql_script": result.sql_script,
+            "workbook": result.workbook_name,
+            "dialect": result.dialect,
+            "skipped": skipped,
+            "field_count": len(result.calculated_fields),
+            "error": None,
+        }
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="BIEscape convert / transpile sidecar")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_convert = sub.add_parser("convert", help="Extract tables to Excel")
+    p_convert.add_argument("input", type=Path)
+    p_convert.add_argument("output", type=Path)
+
+    p_transpile = sub.add_parser("transpile", help="Emit SQL script JSON")
+    p_transpile.add_argument("input", type=Path)
+    p_transpile.add_argument(
+        "--dialect",
+        default="ansi",
+        choices=list(DIALECTS),
+        help="SQL dialect (default: ansi)",
+    )
+
+    args = parser.parse_args(argv)
+    if args.command == "convert":
+        return cmd_convert(args.input, args.output)
+    if args.command == "transpile":
+        return cmd_transpile(args.input, args.dialect)
+    _emit({"ok": False, "error": f"Unknown command: {args.command}"})
+    return 1
 
 
 if __name__ == "__main__":

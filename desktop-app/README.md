@@ -11,6 +11,12 @@ npm install
 npm run dev
 ```
 
+### SQL tab
+
+1. Drop or browse a `.twb` / `.twbx` (also `.hyper` / `.tdsx`).
+2. Open the **SQL** tab → pick dialect → **Generate SQL**.
+3. **Copy** or **Save .sql…**. Conversion stays local via `desktop/convert_cli.py transpile`.
+
 ## Build installer (Windows)
 
 ```bash

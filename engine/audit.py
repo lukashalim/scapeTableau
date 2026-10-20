@@ -98,16 +98,28 @@ def build_sql_script(
 
 
 def build_dax_script(fields: list[CalculatedField], *, workbook_name: str | None = None) -> str:
-    lines = ["// BIEscape generated DAX", "// Calculated-field measures / expressions"]
+    lines = ["// BIEscape generated DAX"]
     if workbook_name:
         lines.append(f"// Source workbook: {workbook_name}")
-    lines.append("")
-    for field in fields:
-        lines.append(f"// {field.caption} ({field.status.value})")
-        body = field.dax or "// (no DAX)"
-        for dax_line in body.splitlines() or [body]:
-            lines.append(dax_line)
+    measures = [f for f in fields if (f.dax_kind or "measure") == "measure"]
+    columns = [f for f in fields if (f.dax_kind or "measure") != "measure"]
+
+    def _emit_section(title: str, group: list[CalculatedField]) -> None:
         lines.append("")
+        lines.append(f"// {title}")
+        if not group:
+            lines.append("// (none)")
+            return
+        for field in group:
+            dax_st = field.dax_status.value if field.dax_status is not None else "unknown"
+            lines.append(f"// {field.caption} (dax_status={dax_st})")
+            body = field.dax or "// (no DAX)"
+            for dax_line in body.splitlines() or [body]:
+                lines.append(dax_line)
+            lines.append("")
+
+    _emit_section("Measures", measures)
+    _emit_section("Calculated columns", columns)
     return "\n".join(lines).rstrip() + "\n"
 
 

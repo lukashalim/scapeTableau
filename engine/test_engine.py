@@ -71,18 +71,17 @@ def test_iif_and_zn_dax() -> None:
     dax, status, err = transpile_formula("IIF([Sales] > 0, [Profit], 0)", target="dax")
     assert status == ParseStatus.ok
     assert err is None
-    assert dax == "IF([Sales] > 0, [Profit], 0)"
+    assert dax == "IF(Orders[Sales] > 0, Orders[Profit], 0)"
     zn, zn_status, _ = transpile_formula("ZN([Profit])", target="dax")
     assert zn_status == ParseStatus.ok
-    assert zn == "IF(ISBLANK([Profit]), 0, [Profit])"
+    assert zn == "IF(ISBLANK(Orders[Profit]), 0, Orders[Profit])"
 
 
-def test_lod_dax_todo_comment() -> None:
+def test_lod_dax_calculate_allexcept() -> None:
     dax, status, err = transpile_formula("{FIXED [Region] : SUM([Sales])}", target="dax")
-    assert status == ParseStatus.unparseable
-    assert err == "LOD expression"
-    assert dax.startswith("// TODO: Review LOD logic:")
-    assert "FIXED" in dax
+    assert status == ParseStatus.ok
+    assert err is None
+    assert dax == "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))"
 
 
 def test_if_elseif_end() -> None:
@@ -130,7 +129,8 @@ def test_sample_workbook_round_trip() -> None:
     lod = next(f for f in result.calculated_fields if f.caption == "Regional Sales")
     assert lod.status == ParseStatus.ok
     assert 'SUM("Sales") OVER (PARTITION BY "Region")' == lod.sql
-    assert lod.dax.startswith("// TODO: Review LOD logic:")
+    assert lod.dax == "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))"
+    assert lod.dax_status == ParseStatus.ok
 
     resolved = next(f for f in result.calculated_fields if f.caption == "Ratio Abs")
     assert 'ABS((SUM("Profit") / SUM("Sales")))' == resolved.sql

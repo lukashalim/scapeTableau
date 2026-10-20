@@ -16,6 +16,7 @@ EXPECTED_CAPTIONS = [
     "Fixed Region Sales",
     "Grand Total Sales",
     "Include Category Sales",
+    "Avg Customer Sales",
     "Exclude Region Sales",
     "Region Customers",
     "Nested Min Category",
@@ -101,6 +102,12 @@ def test_lod_duckdb_matches_expected() -> None:
         assert row["Grand Total Sales"] == grand
         include = {"East": {"Furniture": 125.0, "Office Supplies": 50.0}, "West": {"Furniture": 200.0, "Office Supplies": 80.0}}
         assert row["Include Category Sales"] == include[region][category]
+        avg_customer = {"East": 87.5, "West": 280.0, "Central": 720.26}
+        got_avg = row["Avg Customer Sales"]
+        if region == "Central":
+            assert abs(got_avg - 720.26) < 0.01
+        else:
+            assert got_avg == avg_customer[region]
         assert row["Exclude Region Sales"] == grand
         assert row["Region Customers"] == (2 if region == "East" else 1)
         assert row["Nested Min Category"] == (50.0 if region == "East" else 80.0)
@@ -140,6 +147,9 @@ def test_include_exclude_region_grain() -> None:
     assert "OVER ()" in exc
     assert "Review LOD logic" not in inc
     assert "Review LOD logic" not in exc
+    avg = fields["Avg Customer Sales"].sql
+    assert "GROUP BY" in avg and "AVG(lod_inner)" in avg
+    assert "OVER (" not in avg
 
 
 def main() -> None:

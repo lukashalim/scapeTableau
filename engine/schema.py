@@ -158,6 +158,7 @@ class CalculatedField(BaseModel):
     error: str | None = None
     dax: str = ""
     dax_status: ParseStatus | None = None
+    dax_kind: str | None = None
 
     @property
     def raw_formula(self) -> str:

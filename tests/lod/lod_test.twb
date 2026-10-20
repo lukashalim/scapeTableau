@@ -22,6 +22,9 @@
       <column caption='Include Category Sales' datatype='real' name='[Include Category Sales]' role='measure' type='quantitative'>
         <calculation class='tableau' formula='{INCLUDE [Category] : SUM([Sales])}' />
       </column>
+      <column caption='Avg Customer Sales' datatype='real' name='[Avg Customer Sales]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='AVG({INCLUDE [Customer] : SUM([Sales])})' />
+      </column>
       <column caption='Exclude Region Sales' datatype='real' name='[Exclude Region Sales]' role='measure' type='quantitative'>
         <calculation class='tableau' formula='{EXCLUDE [Region] : SUM([Sales])}' />
       </column>
@@ -75,6 +78,7 @@
           [federated.lod].[sum:Fixed Region Sales:qk],
           [federated.lod].[sum:Grand Total Sales:qk],
           [federated.lod].[sum:Include Category Sales:qk],
+          [federated.lod].[sum:Avg Customer Sales:qk],
           [federated.lod].[sum:Exclude Region Sales:qk],
           [federated.lod].[sum:Region Customers:qk],
           [federated.lod].[sum:Nested Min Category:qk],

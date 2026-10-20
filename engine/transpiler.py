@@ -25,6 +25,57 @@ KEYWORDS = {
 
 AGG_FUNCS = {"SUM", "AVG", "COUNT", "MIN", "MAX", "COUNTD", "ATTR"}
 PASSTHROUGH = {"TRIM", "UPPER", "LOWER", "ABS", "ROUND"}
+ROW_FUNCS = {
+    "YEAR",
+    "MONTH",
+    "DAY",
+    "QUARTER",
+    "DATEDIFF",
+    "DATEADD",
+    "DATETRUNC",
+    "DATEPART",
+    "MAKEDATE",
+    "LEN",
+    "TRIM",
+    "UPPER",
+    "LOWER",
+    "ABS",
+    "ROUND",
+    "CONTAINS",
+    "STARTSWITH",
+    "ENDSWITH",
+    "ZN",
+    "IFNULL",
+    "ISNULL",
+    "IIF",
+}
+DAX_ITER = {
+    "SUM": "SUMX",
+    "AVG": "AVERAGEX",
+    "MIN": "MINX",
+    "MAX": "MAXX",
+    "COUNT": "COUNTX",
+    "ATTR": "MINX",
+}
+DATE_INTERVAL = {
+    "day": "DAY",
+    "dd": "DAY",
+    "month": "MONTH",
+    "mm": "MONTH",
+    "year": "YEAR",
+    "yy": "YEAR",
+    "yyyy": "YEAR",
+    "quarter": "QUARTER",
+    "qq": "QUARTER",
+    "week": "WEEK",
+    "wk": "WEEK",
+    "hour": "HOUR",
+    "hh": "HOUR",
+    "minute": "MINUTE",
+    "mi": "MINUTE",
+    "second": "SECOND",
+    "ss": "SECOND",
+}
 TABLE_CALC_PREFIXES = (
     "WINDOW_",
     "RUNNING_",
@@ -131,8 +182,11 @@ class FormulaContext:
     calc_sql: dict[str, str] = field(default_factory=dict)
     calc_dax: dict[str, str] = field(default_factory=dict)
     calc_status: dict[str, ParseStatus] = field(default_factory=dict)
+    calc_dax_status: dict[str, ParseStatus] = field(default_factory=dict)
+    calc_dax_kind: dict[str, str] = field(default_factory=dict)
     view_dims: list[str] | None = None
     source_table: str = "Orders"
+    dax_table: str = "Orders"
     current_keys: set[str] = field(default_factory=set)
     original_formula: str = ""
 
@@ -585,6 +639,49 @@ def _has_countd(node: Node) -> bool:
     return any(isinstance(n, Call) and n.name.upper() == "COUNTD" for n in _walk(node))
 
 
+def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
+    """measure if the root is an agg/LOD (or DIVIDE of those); else calculated_column."""
+
+    ctx = ctx or FormulaContext()
+    if isinstance(node, LodExpr):
+        return "measure"
+    if isinstance(node, Paren):
+        return classify_dax_kind(node.expr, ctx)
+    if isinstance(node, UnaryOp):
+        return classify_dax_kind(node.expr, ctx)
+    if isinstance(node, FieldRef):
+        return ctx.calc_dax_kind.get(node.name, "calculated_column")
+    if isinstance(node, Call):
+        fn = node.name.upper()
+        if fn in AGG_FUNCS:
+            return "measure"
+        if fn in ROW_FUNCS:
+            return "calculated_column"
+        kinds = [classify_dax_kind(arg, ctx) for arg in node.args]
+        return "measure" if "measure" in kinds else "calculated_column"
+    if isinstance(node, BinaryOp):
+        left = classify_dax_kind(node.left, ctx)
+        right = classify_dax_kind(node.right, ctx)
+        if left == "measure" or right == "measure":
+            return "measure"
+        return "calculated_column"
+    if isinstance(node, IfExpr):
+        parts = [classify_dax_kind(c, ctx) for c, _ in node.branches]
+        parts.extend(classify_dax_kind(t, ctx) for _, t in node.branches)
+        if node.else_expr is not None:
+            parts.append(classify_dax_kind(node.else_expr, ctx))
+        return "measure" if "measure" in parts else "calculated_column"
+    if isinstance(node, CaseExpr):
+        parts = [classify_dax_kind(c, ctx) for c, _ in node.branches]
+        parts.extend(classify_dax_kind(t, ctx) for _, t in node.branches)
+        if node.expr is not None:
+            parts.append(classify_dax_kind(node.expr, ctx))
+        if node.else_expr is not None:
+            parts.append(classify_dax_kind(node.else_expr, ctx))
+        return "measure" if "measure" in parts else "calculated_column"
+    return "calculated_column"
+
+
 def _norm_part(arg: Node) -> str:
     if isinstance(arg, Literal) and arg.kind == "string":
         return arg.value.strip().lower()
@@ -704,6 +801,8 @@ class Emitter:
                 return f"NOT({inner})"
             return f"{node.op}{inner}"
         if isinstance(node, BinaryOp):
+            if node.op == "/":
+                return f"DIVIDE({self.emit_dax(node.left)}, {self.emit_dax(node.right)})"
             op = {"AND": "&&", "OR": "||", "<>": "<>"}.get(node.op, node.op)
             return f"{self.emit_dax(node.left)} {op} {self.emit_dax(node.right)}"
         if isinstance(node, Paren):
@@ -713,8 +812,7 @@ class Emitter:
         if isinstance(node, CaseExpr):
             return self._dax_case(node)
         if isinstance(node, LodExpr):
-            raw = self.ctx.original_formula or "{LOD}"
-            raise LodFallback(raw)
+            return self._dax_lod(node)
         if isinstance(node, Call):
             return self._dax_call(node)
         raise TranspileFormulaError(f"Unsupported node {type(node)!r}")
@@ -728,14 +826,25 @@ class Emitter:
             return f"({self.ctx.calc_sql[key]})"
         return quote_ident(node.name, self.dialect)
 
+    def _dax_table(self) -> str:
+        return self.ctx.dax_table or self.ctx.source_table or "Orders"
+
+    def _dax_col(self, name: str) -> str:
+        return f"{self._dax_table()}[{name}]"
+
     def _dax_field(self, node: FieldRef) -> str:
         key = node.name
         if key not in self.ctx.current_keys and key in self.ctx.calc_dax:
-            status = self.ctx.calc_status.get(key)
+            status = self.ctx.calc_dax_status.get(key)
+            if status is None:
+                status = self.ctx.calc_status.get(key)
             if status is not None and status != ParseStatus.ok:
                 raise TranspileFormulaError(f"Dependency failed: {key}")
-            return f"({self.ctx.calc_dax[key]})"
-        return f"[{node.name}]"
+            kind = self.ctx.calc_dax_kind.get(key, "measure")
+            if kind == "measure":
+                return f"[{key}]"
+            return self._dax_col(key)
+        return self._dax_col(node.name)
 
     def _lookup_param(self, name: str) -> ParameterInfo | None:
         key = name.strip()
@@ -797,15 +906,27 @@ class Emitter:
         return f"IF({self.emit_dax(cond)}, {self.emit_dax(then)}, {rest})"
 
     def _dax_case(self, node: CaseExpr) -> str:
+        else_part = self.emit_dax(node.else_expr) if node.else_expr is not None else "BLANK()"
         if node.expr is None:
-            branches = node.branches
-        else:
-            left = node.expr
-            branches = [(BinaryOp("=", left, val), res) for val, res in node.branches]
-        return self._dax_if(branches, node.else_expr)
+            parts = ["SWITCH(TRUE()"]
+            for cond, res in node.branches:
+                parts.append(f"{self.emit_dax(cond)}, {self.emit_dax(res)}")
+            parts.append(else_part)
+            return ", ".join(parts) + ")"
+        parts = [f"SWITCH({self.emit_dax(node.expr)}"]
+        for val, res in node.branches:
+            parts.append(f"{self.emit_dax(val)}, {self.emit_dax(res)}")
+        parts.append(else_part)
+        return ", ".join(parts) + ")"
 
     def _sql_call(self, node: Call) -> str:
         fn = node.name.upper()
+        if fn in AGG_FUNCS and node.args:
+            inner = node.args[0]
+            while isinstance(inner, Paren):
+                inner = inner.expr
+            if isinstance(inner, LodExpr):
+                return self._grouped_agg_over_lod(fn, inner)
         args = [self.emit_sql(a) for a in node.args]
         original = node.name
         if fn == "IIF":
@@ -863,6 +984,12 @@ class Emitter:
 
     def _dax_call(self, node: Call) -> str:
         fn = node.name.upper()
+        if fn in AGG_FUNCS and node.args:
+            inner = node.args[0]
+            while isinstance(inner, Paren):
+                inner = inner.expr
+            if isinstance(inner, LodExpr):
+                return self._dax_agg_over_lod(fn, inner)
         args = [self.emit_dax(a) for a in node.args]
         original = node.name
         if fn == "IIF" or fn == "IF":
@@ -907,7 +1034,7 @@ class Emitter:
             return "TODAY()"
         if fn == "NOW":
             return "NOW()"
-        date_dax = self._dax_date(fn, args)
+        date_dax = self._dax_date(fn, node, args)
         if date_dax is not None:
             return date_dax
         if any(fn.startswith(p) or fn == p.rstrip("_") for p in TABLE_CALC_PREFIXES):
@@ -970,7 +1097,11 @@ class Emitter:
             return f"MAKE_DATE({args[0]}, {args[1]}, {args[2]})"
         return None
 
-    def _dax_date(self, fn: str, args: list[str]) -> str | None:
+    def _dax_interval(self, node: Call, index: int = 0) -> str:
+        part = _norm_part(node.args[index]) if node.args else "day"
+        return DATE_INTERVAL.get(part, (part or "DAY").upper())
+
+    def _dax_date(self, fn: str, node: Call, args: list[str]) -> str | None:
         if fn in {"YEAR", "MONTH", "DAY"}:
             if len(args) != 1:
                 raise TranspileFormulaError(f"{fn} expects 1 argument")
@@ -982,15 +1113,23 @@ class Emitter:
         if fn == "DATEDIFF":
             if len(args) != 3:
                 raise TranspileFormulaError("DATEDIFF expects 3 arguments")
-            return f"DATEDIFF({args[1]}, {args[2]}, {args[0].strip(chr(34))})"
+            return f"DATEDIFF({args[1]}, {args[2]}, {self._dax_interval(node)})"
         if fn == "DATEADD":
             if len(args) != 3:
                 raise TranspileFormulaError("DATEADD expects 3 arguments")
-            return f"DATEADD({args[2]}, {args[1]}, {args[0].strip(chr(34))})"
+            return f"DATEADD({args[2]}, {args[1]}, {self._dax_interval(node)})"
         if fn == "DATETRUNC":
             if len(args) != 2:
                 raise TranspileFormulaError("DATETRUNC expects 2 arguments")
-            return f"DATEADD({args[1]}, 0, {args[0].strip(chr(34))})"
+            part = self._dax_interval(node)
+            date = args[1]
+            if part == "MONTH":
+                return f"DATE(YEAR({date}), MONTH({date}), 1)"
+            if part == "YEAR":
+                return f"DATE(YEAR({date}), 1, 1)"
+            if part == "DAY":
+                return date
+            return f"DATEADD({date}, 0, {part})"
         if fn == "MAKEDATE":
             if len(args) != 3:
                 raise TranspileFormulaError("MAKEDATE expects 3 arguments")
@@ -998,7 +1137,7 @@ class Emitter:
         if fn == "DATEPART":
             if len(args) != 2:
                 raise TranspileFormulaError("DATEPART expects 2 arguments")
-            return f"DATEPART({args[1]}, {args[0]})"
+            return f"{self._dax_interval(node)}({args[1]})"
         return None
 
     def _like(
@@ -1105,39 +1244,110 @@ class Emitter:
         countd = _has_countd(lod.agg)
         if nested:
             self.lod_cte = True
-            return self._nested_lod_subquery(lod, grain_sql)
+            return self._nested_lod_subquery(lod, grain)
         if countd:
             self.lod_cte = True
             return self._lod_subquery(lod, grain_sql)
         return self._wrap_aggs(lod.agg, over)
 
-    def _nested_lod_subquery(self, lod: LodExpr, grain_sql: list[str]) -> str:
-        agg = lod.agg
+    def _grouped_agg_over_lod(
+        self,
+        outer_fn: str,
+        lod: LodExpr,
+        *,
+        correlate_dims: list[str] | None = None,
+    ) -> str:
+        """GROUP BY LOD grain, then apply outer agg — not a row-weighted window."""
+
         table = quote_ident(self.ctx.source_table or "Orders", self.dialect)
         alias = "_lod"
+        group_dims = self._lod_grain(lod)
+        group_sql = [quote_ident(g, self.dialect) for g in group_dims]
+        if correlate_dims is None:
+            correlate_dims = list(self.ctx.view_dims or [])
+        corr_sql = [quote_ident(g, self.dialect) for g in correlate_dims]
+        inner_agg = self.emit_sql(lod.agg)
+        where = ""
+        if corr_sql:
+            preds = " AND ".join(f"{alias}.{col} = {table}.{col}" for col in corr_sql)
+            where = f" WHERE {preds}"
+        group = ""
+        if group_sql:
+            group = " GROUP BY " + ", ".join(f"{alias}.{col}" for col in group_sql)
+        if outer_fn == "COUNTD":
+            outer_expr = "COUNT(DISTINCT lod_inner)"
+        elif outer_fn == "ATTR":
+            outer_expr = "MIN(lod_inner)"
+        else:
+            outer_expr = f"{outer_fn}(lod_inner)"
+        inner_select = f"SELECT {inner_agg} AS lod_inner FROM {table} AS {alias}{where}{group}"
+        return f"(SELECT {outer_expr} FROM ({inner_select}) AS _lod_n)"
+
+    def _nested_lod_subquery(self, lod: LodExpr, outer_grain: list[str]) -> str:
+        agg = lod.agg
         if isinstance(agg, Call) and agg.args:
             inner = self._unwrap(agg.args[0])
             if isinstance(inner, LodExpr):
-                inner_grain = [quote_ident(g, self.dialect) for g in self._lod_grain(inner)]
-                inner_agg = self.emit_sql(inner.agg)
-                where = ""
-                if grain_sql:
-                    outer = quote_ident(self.ctx.source_table or "Orders", self.dialect)
-                    preds = " AND ".join(f"{alias}.{col} = {outer}.{col}" for col in grain_sql)
-                    where = f" WHERE {preds}"
-                group = ""
-                if inner_grain:
-                    group = " GROUP BY " + ", ".join(f"{alias}.{col}" for col in inner_grain)
-                fn = agg.name.upper()
-                if fn == "COUNTD":
-                    outer = "COUNT(DISTINCT lod_inner)"
-                elif fn == "ATTR":
-                    outer = "MIN(lod_inner)"
-                else:
-                    outer = f"{fn}(lod_inner)"
-                inner_select = f"SELECT {inner_agg} AS lod_inner FROM {table} AS {alias}{where}{group}"
-                return f"(SELECT {outer} FROM ({inner_select}) AS _lod_n)"
+                return self._grouped_agg_over_lod(
+                    agg.name.upper(), inner, correlate_dims=outer_grain
+                )
+        grain_sql = [quote_ident(g, self.dialect) for g in outer_grain]
         return self._lod_subquery(lod, grain_sql)
+
+    def _dax_summarize(self, dims: list[str]) -> str:
+        table = self._dax_table()
+        if not dims:
+            return table
+        if len(dims) == 1:
+            return f"VALUES({self._dax_col(dims[0])})"
+        cols = ", ".join(self._dax_col(d) for d in dims)
+        return f"SUMMARIZE({table}, {cols})"
+
+    def _dax_agg_expr(self, node: Node) -> str:
+        if isinstance(node, Call) and node.name.upper() == "COUNTD" and node.args:
+            return f"DISTINCTCOUNT({self.emit_dax(node.args[0])})"
+        return self.emit_dax(node)
+
+    def _dax_agg_over_lod(self, outer_fn: str, lod: LodExpr) -> str:
+        grain = self._lod_grain(lod)
+        iter_fn = DAX_ITER.get(outer_fn, f"{outer_fn}X")
+        table_expr = self._dax_summarize(grain)
+        inner = self._dax_agg_expr(lod.agg)
+        return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
+
+    def _dax_lod(self, lod: LodExpr) -> str:
+        table = self._dax_table()
+        kind = lod.kind.upper()
+        agg = lod.agg
+        if isinstance(agg, Call) and agg.args and isinstance(self._unwrap(agg.args[0]), LodExpr):
+            inner_lod = self._unwrap(agg.args[0])
+            body = self._dax_agg_over_lod(agg.name.upper(), inner_lod)
+            if kind == "FIXED":
+                dims = [self._dim_name(d) for d in lod.dims]
+                if not dims:
+                    return f"CALCULATE({body}, REMOVEFILTERS({table}))"
+                excepts = ", ".join(self._dax_col(d) for d in dims)
+                return f"CALCULATE({body}, ALLEXCEPT({table}, {excepts}))"
+            return body
+        inner = self._dax_agg_expr(lod.agg)
+        dim_names = [self._dim_name(d) for d in lod.dims]
+        if kind == "FIXED":
+            if not dim_names:
+                return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
+            excepts = ", ".join(self._dax_col(d) for d in dim_names)
+            return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+        if kind == "INCLUDE":
+            grain = self._lod_grain(lod)
+            if not grain:
+                return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
+            excepts = ", ".join(self._dax_col(d) for d in grain)
+            return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+        if kind == "EXCLUDE":
+            if not dim_names:
+                return inner
+            rf = ", ".join(self._dax_col(d) for d in dim_names)
+            return f"CALCULATE({inner}, REMOVEFILTERS({rf}))"
+        return inner
 
     def _lod_subquery(self, lod: LodExpr, grain_sql: list[str]) -> str:
         table = quote_ident(self.ctx.source_table or "Orders", self.dialect)

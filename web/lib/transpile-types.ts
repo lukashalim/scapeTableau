@@ -119,6 +119,7 @@ export interface CalculatedField {
   error?: string | null;
   dax?: string | null;
   dax_status?: "ok" | "unparseable" | "error" | "skipped" | null;
+  dax_kind?: "measure" | "calculated_column" | string | null;
 }
 
 export interface TranspileResult {

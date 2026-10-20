@@ -19,6 +19,7 @@ from engine.schema import (
 )
 from engine.transpiler import (
     FormulaContext,
+    classify_dax_kind,
     field_references,
     normalize_table_name,
     parse_formula,
@@ -55,17 +56,19 @@ def _param_index(params: list[ParameterInfo]) -> dict[str, ParameterInfo]:
     return index
 
 
-def _source_table(workbook, datasource_name: str) -> str:
+def _source_tables(workbook, datasource_name: str) -> tuple[str, str]:
+    """Return (sql_table, dax_table). DAX uses the relation name when present."""
+
     for ds in workbook.datasources:
         if ds.name == datasource_name or (ds.caption or "") == datasource_name:
             for rel in ds.relations:
-                table = normalize_table_name(rel.table) or normalize_table_name(rel.name)
-                if table:
-                    return table
-            if ds.caption:
-                return normalize_table_name(ds.caption)
-            return normalize_table_name(ds.name) or "Orders"
-    return "Orders"
+                sql_table = normalize_table_name(rel.table) or normalize_table_name(rel.name)
+                dax_table = normalize_table_name(rel.name) or sql_table
+                if sql_table or dax_table:
+                    return sql_table or "Orders", dax_table or "Orders"
+            caption = normalize_table_name(ds.caption) or normalize_table_name(ds.name) or "Orders"
+            return caption, caption
+    return "Orders", "Orders"
 
 
 def _calc_keys(name: str, caption: str) -> list[str]:
@@ -145,19 +148,24 @@ def transpile(
         calc_sql: dict[str, str] = {}
         calc_dax: dict[str, str] = {}
         calc_status: dict[str, ParseStatus] = {}
-        table = _source_table(workbook, ds_name)
+        calc_dax_status: dict[str, ParseStatus] = {}
+        calc_dax_kind: dict[str, str] = {}
+        table, dax_table = _source_tables(workbook, ds_name)
 
         for ident in order:
             raw = raw_by_ident[ident]
             resolved = resolve_internal_names(raw.formula, name_map)
             grain = view_dims_for_calc(raw.name, raw.caption, workbook.worksheets)
             current_keys = set(_calc_keys(raw.name, raw.caption))
-            failed_dep = None
+            sql_failed_dep = None
+            dax_failed_dep = None
             for dep in deps.get(ident, set()):
                 st = calc_status.get(dep)
-                if st is not None and st != ParseStatus.ok:
-                    failed_dep = dep
-                    break
+                if st is not None and st != ParseStatus.ok and sql_failed_dep is None:
+                    sql_failed_dep = dep
+                dst = calc_dax_status.get(dep)
+                if dst is not None and dst != ParseStatus.ok and dax_failed_dep is None:
+                    dax_failed_dep = dep
 
             ctx_sql = FormulaContext(
                 dialect=sql_dialect,
@@ -166,8 +174,11 @@ def transpile(
                 calc_sql=calc_sql,
                 calc_dax=calc_dax,
                 calc_status=calc_status,
+                calc_dax_status=calc_dax_status,
+                calc_dax_kind=calc_dax_kind,
                 view_dims=grain,
                 source_table=table,
+                dax_table=dax_table,
                 current_keys=current_keys,
                 original_formula=resolved,
             )
@@ -178,35 +189,56 @@ def transpile(
                 calc_sql=calc_sql,
                 calc_dax=calc_dax,
                 calc_status=calc_status,
+                calc_dax_status=calc_dax_status,
+                calc_dax_kind=calc_dax_kind,
                 view_dims=grain,
                 source_table=table,
+                dax_table=dax_table,
                 current_keys=current_keys,
                 original_formula=resolved,
             )
 
-            if failed_dep is not None:
-                msg = f"Dependency failed: {failed_dep}"
-                sql = f"-- TODO: {msg}: {resolved}"
-                dax = f"// TODO: {msg}: {resolved}"
-                sql_status, sql_err = ParseStatus.error, msg
-                dax_status, dax_err = ParseStatus.error, msg
-            else:
-                try:
-                    tree = parse_formula(resolved, dialect=sql_dialect)
-                    sql, sql_status, sql_err, _ = transpile_tree(tree, ctx=ctx_sql)
-                    dax, dax_status, dax_err, _ = transpile_tree(tree, ctx=ctx_dax)
-                except Exception as exc:  # pragma: no cover
-                    sql, sql_status, sql_err = transpile_formula(resolved, dialect=sql_dialect, target="sql", context=ctx_sql)
-                    dax, dax_status, dax_err = transpile_formula(resolved, dialect=sql_dialect, target="dax", context=ctx_dax)
-                    if sql_err is None:
-                        sql_err = str(exc)
+            try:
+                tree = parse_formula(resolved, dialect=sql_dialect)
+            except Exception:
+                tree = None
 
-            status = dax_status if target_l == "dax" else sql_status
-            error = dax_err if target_l == "dax" else sql_err
+            if sql_failed_dep is not None:
+                msg = f"Dependency failed: {sql_failed_dep}"
+                sql = f"-- TODO: {msg}: {resolved}"
+                sql_status, sql_err = ParseStatus.error, msg
+            elif tree is not None:
+                sql, sql_status, sql_err, _ = transpile_tree(tree, ctx=ctx_sql)
+            else:
+                sql, sql_status, sql_err = transpile_formula(
+                    resolved, dialect=sql_dialect, target="sql", context=ctx_sql
+                )
+
+            if dax_failed_dep is not None:
+                msg = f"Dependency failed: {dax_failed_dep}"
+                dax = f"// TODO: {msg}: {resolved}"
+                dax_status, dax_err = ParseStatus.error, msg
+            elif tree is not None:
+                dax, dax_status, dax_err, _ = transpile_tree(tree, ctx=ctx_dax)
+            else:
+                dax, dax_status, dax_err = transpile_formula(
+                    resolved, dialect=sql_dialect, target="dax", context=ctx_dax
+                )
+
+            kind = "measure"
+            if tree is not None:
+                kind = classify_dax_kind(tree, ctx_dax)
+            status = sql_status
+            error = sql_err
+            if target_l == "dax":
+                status = dax_status
+                error = dax_err
             for key in current_keys:
                 calc_sql[key] = sql
                 calc_dax[key] = dax
                 calc_status[key] = sql_status
+                calc_dax_status[key] = dax_status
+                calc_dax_kind[key] = kind
 
             fields.append(
                 CalculatedField(
@@ -221,6 +253,7 @@ def transpile(
                     error=error,
                     dax=dax,
                     dax_status=dax_status,
+                    dax_kind=kind,
                 )
             )
 

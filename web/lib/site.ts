@@ -134,7 +134,7 @@ export const LANDING_PAGES: LandingPage[] = [
     capabilities: [
       "Map IIF, IF/THEN, ZN, IFNULL, CONTAINS, STARTSWITH, LEN, TRIM, UPPER/LOWER, ABS, ROUND, CASE, and date functions to ANSI SQL.",
       "Emit FIXED LOD as window functions or grain CTEs/subqueries; INCLUDE/EXCLUDE at the worksheet view grain.",
-      "Emit a CREATE VIEW sql_script (dbt config only with --format dbt) plus a markdown audit of each field.",
+      "Emit one CREATE VIEW per datasource (SELECT * + row-level calc columns; bare aggregates as comments). dbt config only with --format dbt, plus a markdown audit.",
     ],
     limitations: [
       "Unknown functions become SQL comments rather than guessed translations.",
@@ -144,7 +144,7 @@ export const LANDING_PAGES: LandingPage[] = [
       {
         question: "Does BIEscape convert Tableau to SQL?",
         answer:
-          "It transpiles calculated-field formulas to ANSI SQL and a CREATE VIEW script. Datasource joins and table calcs are not fully rewritten.",
+          "It transpiles calculated-field formulas to ANSI SQL with one CREATE VIEW per datasource. Datasource joins and table calcs are not fully rewritten.",
       },
       {
         question: "Are LOD calculations converted?",

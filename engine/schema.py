@@ -159,6 +159,7 @@ class CalculatedField(BaseModel):
     dax: str = ""
     dax_status: ParseStatus | None = None
     dax_kind: str | None = None
+    sql_kind: str | None = None  # "row" | "aggregate" when status is ok
 
     @property
     def raw_formula(self) -> str:

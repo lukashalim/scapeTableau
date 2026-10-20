@@ -83,7 +83,7 @@ result = transpile("path/to/workbook.twbx")
 # Or pass raw bytes directly
 # result = transpile(file_bytes)
 
-# Print generated ANSI SQL views and DAX
+# Print generated ANSI SQL (one view per datasource) and DAX
 print(result.sql_script)
 print(result.dax_script)
 
@@ -121,7 +121,7 @@ cat my_dashboard.twbx | python cli.py process - --format json
 # DAX (same parse; --dialect dax also selects DAX status)
 python cli.py process samples/superstore_calcs.twb --target dax --format dax
 
-# dbt-style CREATE VIEW (config block only in this format)
+# dbt-style CREATE VIEW per datasource (config block only in this format)
 python cli.py process samples/superstore_calcs.twb --format dbt
 
 # Inspect schema (JSON or markdown)

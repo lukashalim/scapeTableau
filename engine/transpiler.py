@@ -177,6 +177,20 @@ class Token:
     pos: int
 
 
+def dax_table_ident(name: str) -> str:
+    """Quote a DAX table name as ``'Table'`` (required when names have spaces)."""
+
+    cleaned = (name or "Table").strip() or "Table"
+    return "'" + cleaned.replace("'", "''") + "'"
+
+
+def dax_column_ref(table: str, column: str) -> str:
+    """Return ``'Table'[Column]``."""
+
+    col = (column or "Column").strip().strip("[]") or "Column"
+    return f"{dax_table_ident(table)}[{col}]"
+
+
 @dataclass
 class FormulaContext:
     dialect: str = "ansi"
@@ -193,6 +207,9 @@ class FormulaContext:
     dax_table: str = "Orders"
     current_keys: set[str] = field(default_factory=set)
     original_formula: str = ""
+    # When set, unknown columns become BLANK() and are appended to missing_column_todos.
+    known_columns: set[str] | None = None
+    missing_column_todos: list[str] = field(default_factory=list)
 
 
 class TranspileFormulaError(Exception):
@@ -1100,11 +1117,30 @@ class Emitter:
             return f"({self.ctx.calc_sql[key]})"
         return quote_ident(node.name, self.dialect)
 
+    def _dax_table_bare(self) -> str:
+        return (self.ctx.dax_table or self.ctx.source_table or "Orders").strip() or "Orders"
+
     def _dax_table(self) -> str:
-        return self.ctx.dax_table or self.ctx.source_table or "Orders"
+        """Quoted table ident for ALL / ALLEXCEPT / ALLSELECTED / SUMMARIZE / COUNTROWS."""
+
+        return dax_table_ident(self._dax_table_bare())
 
     def _dax_col(self, name: str) -> str:
-        return f"{self._dax_table()}[{name}]"
+        col = (name or "").strip().strip("[]") or "Column"
+        known = self.ctx.known_columns
+        if known is not None:
+            # Allow calc captions already in calc_dax / current formula keys
+            if (
+                col not in known
+                and col not in self.ctx.calc_dax
+                and col not in self.ctx.current_keys
+                and name not in self.ctx.calc_dax
+            ):
+                todo = f"Missing column '{col}' on table '{self._dax_table_bare()}' → BLANK()"
+                if todo not in self.ctx.missing_column_todos:
+                    self.ctx.missing_column_todos.append(todo)
+                return "BLANK()"
+        return dax_column_ref(self._dax_table_bare(), col)
 
     def _dax_field(self, node: FieldRef) -> str:
         key = node.name

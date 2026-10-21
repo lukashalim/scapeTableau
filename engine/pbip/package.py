@@ -24,6 +24,9 @@ from engine.pbip.render import (
     render_template,
     tmdl_ident,
 )
+from engine.pbip.validate import validate_pbip_files
+
+_THEME_PATH = Path(__file__).resolve().parent / "themes" / "CY24SU10.json"
 from engine.schema import (
     CalculatedField,
     DatasourceInfo,
@@ -44,6 +47,28 @@ def _project_name(workbook_name: str | None) -> str:
 
 def _lineage() -> str:
     return str(uuid.uuid4())
+
+
+def _platform_json(*, item_type: str, display_name: str) -> str:
+    payload = {
+        "$schema": (
+            "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/"
+            "platformProperties/2.0.0/schema.json"
+        ),
+        "metadata": {"type": item_type, "displayName": display_name},
+        "config": {"version": "2.0", "logicalId": str(uuid.uuid4())},
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+
+
+def _pbi_table_name(ds: DatasourceInfo) -> str:
+    caption = (ds.caption or "").strip()
+    if caption and not caption.lower().startswith("dataengine."):
+        return caption
+    name = (ds.name or "").strip()
+    if name and not name.lower().startswith("dataengine.") and name.lower() != "extract":
+        return name
+    return caption or name or "Table"
 
 
 def _datatype_tmdl(datatype: str | None) -> str:
@@ -393,7 +418,7 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
     for ds in result.datasources:
         if (ds.name or "").lower() == "parameters":
             continue
-        table_name = (ds.caption or ds.name or "Table").strip()
+        table_name = _pbi_table_name(ds)
         table_name_by_ds[ds.name] = table_name
         if ds.caption:
             table_name_by_ds[ds.caption] = table_name
@@ -413,6 +438,10 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
             disp, reason = disposition_for_field(field)
             kind = field.dax_kind or "calculated_column"
             polished = hoist_compact_measure_filters(field.dax or "")
+            for todo in getattr(field, "dax_notes", None) or []:
+                report.dax_todos.append(f"{field.caption}: {todo}")
+                disp = "approximated"
+                reason = (reason + "; " if reason else "") + todo
             if _measure_eligible(field):
                 mname = uniquify_measure_name(field.caption, used_measure_names, table_name)
                 measure_blocks.append(_measure_block(field, measure_name=mname))
@@ -485,13 +514,20 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
         {"EXPRESSION_BLOCKS": _expression_blocks(all_params, parameters)},
     )
     files[f"{sm_folder}/definition.pbism"] = render_json_template("definition.pbism.json", {})
+    files[f"{sm_folder}/.platform"] = _platform_json(item_type="SemanticModel", display_name=name)
 
     files[f"{report_folder}/definition.pbir"] = render_json_template(
         "definition.pbir.json",
         {"SEMANTIC_MODEL_FOLDER": sm_folder},
     )
+    files[f"{report_folder}/.platform"] = _platform_json(item_type="Report", display_name=name)
+    # Base theme referenced by report.definition.json — must exist on disk
+    if _THEME_PATH.is_file():
+        files[
+            f"{report_folder}/StaticResources/SharedResources/BaseThemes/CY24SU10.json"
+        ] = _THEME_PATH.read_text(encoding="utf-8")
     # Stage 3: real PBIR definition/ pages + visuals (Franssens layout)
-    files.update(build_pbir_files(result, report_folder))
+    files.update(build_pbir_files(result, report_folder, table_name_by_ds=table_name_by_ds))
 
     files[f"{name}.pbip"] = render_json_template(
         "project.pbip.json",
@@ -499,6 +535,9 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
     )
     files["CONVERSION_REPORT.md"] = report.to_markdown()
     files[".gitignore"] = "**/.pbi/localSettings.json\n**/.pbi/cache.abf\n"
+
+    # Post-build validator — fail the build on schema / missing-file / bad DAX refs
+    validate_pbip_files(files, fail=True)
     return files, report
 
 

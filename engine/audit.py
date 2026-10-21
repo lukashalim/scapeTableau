@@ -356,11 +356,13 @@ def build_sql_script(
 
 
 def _dax_table_name(fields: list[CalculatedField]) -> str:
-    ident = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[")
+    quoted = re.compile(r"'((?:[^']|'')+)'\[")
+    bare = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[")
     for field in fields:
-        match = ident.search(field.dax or "")
+        dax = field.dax or ""
+        match = quoted.search(dax) or bare.search(dax)
         if match:
-            return match.group(1)
+            return match.group(1).replace("''", "'")
     return "Orders"
 
 
@@ -403,6 +405,8 @@ def build_dax_script(
         lines.append("")
 
     def _emit_section(title: str, group: list[CalculatedField], *, kind: str) -> None:
+        from engine.transpiler import dax_column_ref
+
         lines.append("")
         lines.append(f"// {title}")
         if not group:
@@ -416,7 +420,7 @@ def build_dax_script(
             if kind == "measure":
                 assign = f"[{name}] := {body}"
             else:
-                assign = f"{table}[{name}] = {body}"
+                assign = f"{dax_column_ref(table, name)} = {body}"
             for dax_line in assign.splitlines() or [assign]:
                 lines.append(dax_line)
             lines.append("")

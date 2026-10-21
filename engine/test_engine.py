@@ -71,24 +71,24 @@ def test_iif_and_zn_dax() -> None:
     dax, status, err = transpile_formula("IIF([Sales] > 0, [Profit], 0)", target="dax")
     assert status == ParseStatus.ok
     assert err is None
-    assert dax == "IF(Orders[Sales] > 0, Orders[Profit], 0)"
+    assert dax == "IF('Orders'[Sales] > 0, 'Orders'[Profit], 0)"
     zn, zn_status, _ = transpile_formula("ZN([Profit])", target="dax")
     assert zn_status == ParseStatus.ok
-    assert zn == "COALESCE(Orders[Profit], 0)"
+    assert zn == "COALESCE('Orders'[Profit], 0)"
 
 
 def test_lod_dax_calculate_allexcept() -> None:
     dax, status, err = transpile_formula("{FIXED [Region] : SUM([Sales])}", target="dax")
     assert status == ParseStatus.ok
     assert err is None
-    assert dax == "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))"
+    assert dax == "CALCULATE(SUM('Orders'[Sales]), ALLEXCEPT('Orders', 'Orders'[Region]))"
 
 
 def test_max_fixed_none_is_calculate_not_maxx() -> None:
     dax, status, err = transpile_formula("MAX({FIXED : SUM([Sales])})", target="dax")
     assert status == ParseStatus.ok
     assert err is None
-    assert dax == "CALCULATE(SUM(Orders[Sales]), ALL(Orders))"
+    assert dax == "CALCULATE(SUM('Orders'[Sales]), ALL('Orders'))"
     assert "MAXX" not in dax
 
 
@@ -96,7 +96,7 @@ def test_dateadd_month_emits_edate() -> None:
     dax, status, err = transpile_formula("DATEADD('month', 1, [Order Date])", target="dax")
     assert status == ParseStatus.ok
     assert err is None
-    assert dax == "EDATE(Orders[Order Date], 1)"
+    assert dax == "EDATE('Orders'[Order Date], 1)"
 
 
 def test_sql_param_is_bare_literal() -> None:
@@ -158,7 +158,10 @@ def test_sample_workbook_round_trip() -> None:
     lod = next(f for f in result.calculated_fields if f.caption == "Regional Sales")
     assert lod.status == ParseStatus.ok
     assert 'SUM("Sales") OVER (PARTITION BY "Region")' == lod.sql
-    assert lod.dax == "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))"
+    assert lod.dax == (
+        "CALCULATE(SUM('Sample Superstore'[Sales]), "
+        "ALLEXCEPT('Sample Superstore', 'Sample Superstore'[Region]))"
+    )
     assert lod.dax_status == ParseStatus.ok
 
     resolved = next(f for f in result.calculated_fields if f.caption == "Ratio Abs")

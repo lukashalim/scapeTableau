@@ -24,6 +24,7 @@ class ConversionReport:
     notes: list[str] = field(default_factory=list)
     hyper_todos: list[str] = field(default_factory=list)
     parameter_notes: list[str] = field(default_factory=list)
+    dax_todos: list[str] = field(default_factory=list)
 
     def add(self, entry: ConversionEntry) -> None:
         self.entries.append(entry)
@@ -61,6 +62,12 @@ class ConversionReport:
             lines.append("")
             for note in self.hyper_todos:
                 lines.append(f"- {note}")
+            lines.append("")
+        if self.dax_todos:
+            lines.append("## DAX TODOs")
+            lines.append("")
+            for note in self.dax_todos:
+                lines.append(f"- TODO: {note}")
             lines.append("")
         if self.notes:
             lines.append("## Notes")

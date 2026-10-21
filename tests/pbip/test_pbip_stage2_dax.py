@@ -34,15 +34,15 @@ def test_measure_vs_column_classifier() -> None:
 
 def test_aggregate_dax_primitives() -> None:
     cases = [
-        ("SUM([Sales])", "SUM(Orders[Sales])"),
-        ("AVG([Sales])", "AVERAGE(Orders[Sales])"),
-        ("COUNTD([Customer])", "DISTINCTCOUNT(Orders[Customer])"),
-        ("ZN([Profit])", "COALESCE(Orders[Profit], 0)"),
-        ("IIF([Sales] > 0, [Profit], 0)", "IF(Orders[Sales] > 0, Orders[Profit], 0)"),
-        ("ATTR([Region])", "IF(HASONEVALUE(Orders[Region]), VALUES(Orders[Region]), BLANK())"),
+        ("SUM([Sales])", "SUM('Orders'[Sales])"),
+        ("AVG([Sales])", "AVERAGE('Orders'[Sales])"),
+        ("COUNTD([Customer])", "DISTINCTCOUNT('Orders'[Customer])"),
+        ("ZN([Profit])", "COALESCE('Orders'[Profit], 0)"),
+        ("IIF([Sales] > 0, [Profit], 0)", "IF('Orders'[Sales] > 0, 'Orders'[Profit], 0)"),
+        ("ATTR([Region])", "IF(HASONEVALUE('Orders'[Region]), VALUES('Orders'[Region]), BLANK())"),
         (
             "SUM([Profit])/SUM([Sales])",
-            "DIVIDE(SUM(Orders[Profit]), SUM(Orders[Sales]))",
+            "DIVIDE(SUM('Orders'[Profit]), SUM('Orders'[Sales]))",
         ),
     ]
     for formula, expected in cases:
@@ -54,13 +54,13 @@ def test_aggregate_dax_primitives() -> None:
 def test_fixed_lod_dax_patterns() -> None:
     dax, st, err = transpile_formula("{FIXED [Region]: SUM([Sales])}", target="dax")
     assert st == ParseStatus.ok, err
-    assert dax == "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))"
+    assert dax == "CALCULATE(SUM('Orders'[Sales]), ALLEXCEPT('Orders', 'Orders'[Region]))"
     none, nst, _ = transpile_formula("{SUM([Sales])}", target="dax")
     assert nst == ParseStatus.ok
-    assert none == "CALCULATE(SUM(Orders[Sales]), ALL(Orders))"
+    assert none == "CALCULATE(SUM('Orders'[Sales]), ALL('Orders'))"
     avg, ast, _ = transpile_formula("AVG({FIXED [Customer]: SUM([Sales])})", target="dax")
     assert ast == ParseStatus.ok
-    assert avg == "AVERAGEX(VALUES(Orders[Customer]), CALCULATE(SUM(Orders[Sales])))"
+    assert avg == "AVERAGEX(VALUES('Orders'[Customer]), CALCULATE(SUM('Orders'[Sales])))"
     nested, nest_st, _ = transpile_formula(
         "{FIXED [Region]: AVG({FIXED [Customer]: SUM([Sales])})}", target="dax"
     )
@@ -101,12 +101,17 @@ def test_superstore_golden_measures() -> None:
 
     profit_ratio = fields["Profit Ratio"]
     assert profit_ratio.dax_kind == "measure"
-    assert profit_ratio.dax == "DIVIDE(SUM(Extract[Profit]), SUM(Extract[Sales]))"
+    assert profit_ratio.dax == (
+        "DIVIDE(SUM('Sample - Superstore'[Profit]), SUM('Sample - Superstore'[Sales]))"
+    )
+    assert "Extract[" not in (profit_ratio.dax or "")
+    assert "SUM('" not in (profit_ratio.dax or "").replace("SUM('Sample", "")
 
     ppc = fields["Profit per Customer"]
     assert ppc.dax_kind == "measure"
     assert ppc.dax == (
-        "DIVIDE(SUM(Extract[Profit]), DISTINCTCOUNT(Extract[Customer Name]))"
+        "DIVIDE(SUM('Sample - Superstore'[Profit]), "
+        "DISTINCTCOUNT('Sample - Superstore'[Customer Name]))"
     )
 
     achieved = fields["Achieved Quota"]

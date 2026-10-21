@@ -58,17 +58,34 @@ def _param_index(params: list[ParameterInfo]) -> dict[str, ParameterInfo]:
     return index
 
 
+def _pbi_table_name(ds) -> str:
+    """Power BI / DAX table name — datasource caption (never Tableau 'Extract' / dataengine.*)."""
+
+    caption = (getattr(ds, "caption", None) or "").strip()
+    if caption and not caption.lower().startswith("dataengine."):
+        return caption
+    from engine.audit import _hyper_file_stem
+
+    stem = _hyper_file_stem(ds)
+    if stem:
+        return stem
+    name = (getattr(ds, "name", None) or "").strip()
+    if name and not name.lower().startswith("dataengine.") and name.lower() != "extract":
+        return normalize_table_name(name) or name
+    return "Orders"
+
+
 def _source_tables(workbook, datasource_name: str) -> tuple[str, str]:
-    """Return (sql_table, dax_table). DAX uses the relation name when present."""
+    """Return (sql_table, dax_table). DAX table matches the PBIP table (caption)."""
 
     from engine.audit import _hyper_file_stem, _is_generic_extract_table
     from engine.transpiler import split_tableau_ident
 
     for ds in workbook.datasources:
         if ds.name == datasource_name or (ds.caption or "") == datasource_name:
+            dax_table = _pbi_table_name(ds)
             for rel in ds.relations:
                 parts = split_tableau_ident(rel.table or rel.name)
-                dax_table = normalize_table_name(rel.name) or (parts[-1] if parts else "")
                 if parts and _is_generic_extract_table(parts):
                     sql_table = (
                         (ds.caption or "").strip()
@@ -79,10 +96,31 @@ def _source_tables(workbook, datasource_name: str) -> tuple[str, str]:
                 else:
                     sql_table = ".".join(parts) if parts else normalize_table_name(rel.name)
                 if sql_table or dax_table:
-                    return sql_table or "Orders", dax_table or sql_table or "Orders"
-            caption = (ds.caption or "").strip() or normalize_table_name(ds.name) or "Orders"
-            return caption, caption
+                    return sql_table or dax_table or "Orders", dax_table or sql_table or "Orders"
+            return dax_table, dax_table
     return "Orders", "Orders"
+
+
+def _known_columns_for_ds(workbook, datasource_name: str) -> set[str]:
+    """Captions / bare names of physical + calc columns on a datasource."""
+
+    out: set[str] = set()
+    for ds in workbook.datasources:
+        if ds.name != datasource_name and (ds.caption or "") != datasource_name:
+            continue
+        for col in ds.fields:
+            if col.caption:
+                out.add(col.caption.strip("[]"))
+            if col.name:
+                out.add(col.name.strip("[]"))
+        break
+    for raw in workbook.calculated_fields:
+        if raw.datasource_name == datasource_name or (raw.datasource_caption or "") == datasource_name:
+            if raw.caption:
+                out.add(raw.caption.strip("[]"))
+            if raw.name:
+                out.add(raw.name.strip("[]"))
+    return out
 
 
 def _calc_keys(name: str, caption: str) -> list[str]:
@@ -222,6 +260,7 @@ def transpile(
                 if dst is not None and dst != ParseStatus.ok and dax_failed_dep is None:
                     dax_failed_dep = dep
 
+            known_cols = _known_columns_for_ds(workbook, ds_name)
             ctx_sql = FormulaContext(
                 dialect=sql_dialect,
                 target="sql",
@@ -253,6 +292,7 @@ def transpile(
                 dax_table=dax_table,
                 current_keys=current_keys,
                 original_formula=resolved,
+                known_columns=known_cols or None,
             )
 
             try:
@@ -319,6 +359,7 @@ def transpile(
                     dax_status=dax_status,
                     dax_kind=kind,
                     sql_kind=sql_kind,
+                    dax_notes=list(ctx_dax.missing_column_todos),
                 )
             )
 

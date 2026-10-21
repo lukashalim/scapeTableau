@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 from engine.schema import ParseStatus
+from engine.transpiler import dax_column_ref, dax_table_ident
 
 
 @dataclass
@@ -26,11 +27,17 @@ _ALONG_SIMPLE_RE = re.compile(
 )
 
 
-def _measure_ref(field: str, agg: str | None) -> str:
-    caption = (field or "Value").strip()
+def _measure_ref(field: str, agg: str | None, dax_table: str) -> str:
+    """Build a DAX agg/measure ref — never ``SUM('Col')`` without a table."""
+
+    caption = (field or "Value").strip().strip("[]") or "Value"
     if agg:
-        # Prefer a named measure if the field looks like an existing measure caption.
-        return f"[{caption}]" if " " in caption or not agg else f"{agg.upper()}('{caption}')"
+        fn = agg.upper()
+        if fn == "COUNTD":
+            return f"DISTINCTCOUNT({dax_column_ref(dax_table, caption)})"
+        if fn == "AVG":
+            return f"AVERAGE({dax_column_ref(dax_table, caption)})"
+        return f"{fn}({dax_column_ref(dax_table, caption)})"
     return f"[{caption}]"
 
 
@@ -50,12 +57,11 @@ def transpile_table_calc_formula(formula: str, *, dax_table: str = "Orders") -> 
     agg = match.groupdict().get("agg")
     field = match.group("field").strip()
     addr = match.group("addr").strip()
-    measure = _measure_ref(field, agg)
+    measure = _measure_ref(field, agg, dax_table)
+    table = dax_table_ident(dax_table)
 
     if label.startswith("rank"):
-        dax = (
-            f"RANKX(ALLSELECTED({dax_table}), {measure}, , DESC, DENSE)"
-        )
+        dax = f"RANKX(ALLSELECTED({table}), {measure}, , DESC, DENSE)"
         return TableCalcDax(
             dax=dax,
             status=ParseStatus.ok,
@@ -74,9 +80,9 @@ def transpile_table_calc_formula(formula: str, *, dax_table: str = "Orders") -> 
 
     if "running" in label or label.startswith("running sum"):
         dax = (
-            f"CALCULATE({measure}, FILTER(ALLSELECTED({dax_table}), "
-            f"RANKX(ALLSELECTED({dax_table}), {measure}, , ASC, DENSE) "
-            f"<= RANKX(ALLSELECTED({dax_table}), {measure}, , ASC, DENSE)))"
+            f"CALCULATE({measure}, FILTER(ALLSELECTED({table}), "
+            f"RANKX(ALLSELECTED({table}), {measure}, , ASC, DENSE) "
+            f"<= RANKX(ALLSELECTED({table}), {measure}, , ASC, DENSE)))"
         )
         return TableCalcDax(
             dax=dax,

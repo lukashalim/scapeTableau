@@ -24,6 +24,25 @@ _VENDOR_VISUALS = (
 )
 
 _SAFE = re.compile(r"[^a-zA-Z0-9]+")
+_INTERNAL_FIELD = re.compile(
+    r"^(dataengine\.|[^:]*:Measure Names|:Measure Values|Measure Names|Measure Values|"
+    r"Number of Records|__tableau)",
+    re.IGNORECASE,
+)
+
+
+def _is_internal_field(raw: str) -> bool:
+    text = (raw or "").strip()
+    if not text:
+        return True
+    if _INTERNAL_FIELD.search(text):
+        return True
+    key = _field_caption(text)
+    if key.lower() in {"measure names", "measure values", "number of records"}:
+        return True
+    if key.lower().startswith("dataengine."):
+        return True
+    return False
 
 
 def _page_id(name: str) -> str:
@@ -49,20 +68,41 @@ def _field_caption(raw: str) -> str:
     return text.strip("[]") or "Field"
 
 
-def _resolve_caption(raw: str, fields: list[CalculatedField], ds_caption: str) -> tuple[str, bool]:
-    """Return (caption, is_measure)."""
+def _resolve_caption(
+    raw: str,
+    fields: list[CalculatedField],
+    model_columns: set[str],
+    model_measures: set[str],
+) -> tuple[str, bool] | None:
+    """Return (caption, is_measure) or None to skip (internal / unresolved)."""
 
+    if _is_internal_field(raw):
+        return None
     key = _field_caption(raw)
+    if _is_internal_field(key):
+        return None
     for f in fields:
         if f.caption == key or f.name.strip("[]") == key or key in {f.caption, f.name}:
             is_meas = (f.dax_kind == "measure") or (
-                f.dax_status == ParseStatus.ok and "SUM(" in (f.dax or "").upper()
+                f.dax_status == ParseStatus.ok and f.caption in model_measures
             )
-            return f.caption, bool(is_meas)
-    # Heuristic: sum:/avg: shelf → measure-like
-    lowered = (raw or "").lower()
-    is_meas = any(tok in lowered for tok in (":qk", "sum:", "avg:", "min:", "max:", "cnt:", "ctd:"))
-    return key, is_meas
+            # Prefer real model names
+            if is_meas and f.caption in model_measures:
+                return f.caption, True
+            if f.caption in model_columns or f.caption in model_measures:
+                return f.caption, bool(is_meas) or f.caption in model_measures
+            return None
+    # Physical column on the entity
+    if key in model_columns:
+        lowered = (raw or "").lower()
+        is_meas = any(tok in lowered for tok in (":qk", "sum:", "avg:", "min:", "max:", "cnt:", "ctd:"))
+        # Aggregated shelf on a column → bind as measure if a measure with that caption exists
+        if is_meas and key in model_measures:
+            return key, True
+        return key, False
+    if key in model_measures:
+        return key, True
+    return None
 
 
 def _choose_visual_type(ws: WorksheetInfo, n_dims: int, n_meas: int) -> str:
@@ -179,19 +219,69 @@ def _build_visual_json(
     }
 
 
-def _entity_for_worksheet(ws: WorksheetInfo, result: TranspileResult) -> str:
+def _entity_for_worksheet(
+    ws: WorksheetInfo,
+    result: TranspileResult,
+    table_name_by_ds: dict[str, str] | None = None,
+) -> str:
     ds_name = ws.datasource
+    if table_name_by_ds and ds_name and ds_name in table_name_by_ds:
+        return table_name_by_ds[ds_name]
     for ds in result.datasources:
         if ds.name == ds_name or ds.caption == ds_name:
+            if table_name_by_ds and ds.name in table_name_by_ds:
+                return table_name_by_ds[ds.name]
+            caption = (ds.caption or "").strip()
+            if caption and not caption.lower().startswith("dataengine."):
+                return caption
             return (ds.caption or ds.name or "Table").strip()
     if result.datasources:
         ds = next((d for d in result.datasources if (d.name or "").lower() != "parameters"), None)
         if ds:
+            if table_name_by_ds and ds.name in table_name_by_ds:
+                return table_name_by_ds[ds.name]
             return (ds.caption or ds.name or "Table").strip()
     return "Table"
 
 
-def build_pbir_files(result: TranspileResult, report_folder: str) -> dict[str, str]:
+def _model_fields(
+    result: TranspileResult, entity: str, table_name_by_ds: dict[str, str] | None
+) -> tuple[set[str], set[str]]:
+    """Return (columns, measures) for a PBI table entity."""
+
+    columns: set[str] = set()
+    measures: set[str] = set()
+    for f in result.calculated_fields:
+        if f.dax_kind == "measure" and f.dax_status == ParseStatus.ok:
+            measures.add(f.caption)
+    for ds in result.datasources:
+        tname = None
+        if table_name_by_ds and ds.name in table_name_by_ds:
+            tname = table_name_by_ds[ds.name]
+        else:
+            tname = (ds.caption or ds.name or "").strip()
+        if tname != entity:
+            continue
+        for col in ds.fields:
+            if col.calculated:
+                continue
+            cap = (col.caption or col.name or "").strip("[]")
+            if cap and not _is_internal_field(cap):
+                columns.add(cap)
+        for f in result.calculated_fields:
+            ds_keys = {ds.name, ds.caption}
+            if f.datasource in ds_keys and f.dax_kind != "measure":
+                if f.caption and f.dax_status == ParseStatus.ok:
+                    columns.add(f.caption)
+    return columns, measures
+
+
+def build_pbir_files(
+    result: TranspileResult,
+    report_folder: str,
+    *,
+    table_name_by_ds: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Return zip paths → contents for PBIR definition/ tree."""
 
     files: dict[str, str] = {}
@@ -201,34 +291,28 @@ def build_pbir_files(result: TranspileResult, report_folder: str) -> dict[str, s
 
     worksheets = list(getattr(result, "worksheets", None) or [])
     if not worksheets:
-        # One placeholder page when no worksheet metadata
         page_name = "page1"
-        files[f"{base}/pages/pages.json"] = render_template(
-            "pages.json",
-            {
-                "PAGE_ORDER_JSON": json.dumps([page_name]),
-                "ACTIVE_PAGE": page_name,
-            },
-        )
-        # render_template leaves JSON; pretty-print
         files[f"{base}/pages/pages.json"] = (
-            json.dumps(json.loads(files[f"{base}/pages/pages.json"]), indent=2) + "\n"
+            json.dumps(
+                {
+                    "$schema": (
+                        "https://developer.microsoft.com/json-schemas/fabric/item/report/"
+                        "definition/pagesMetadata/1.0.0/schema.json"
+                    ),
+                    "pageOrder": [page_name],
+                    "activePageName": page_name,
+                },
+                indent=2,
+            )
+            + "\n"
         )
         files[f"{base}/pages/{page_name}/page.json"] = render_json_template(
             "page.json",
-            {
-                "PAGE_NAME": page_name,
-                "PAGE_DISPLAY": "Converted",
-            },
+            {"PAGE_NAME": page_name, "PAGE_DISPLAY": "Converted"},
         )
-        entity = _entity_for_worksheet(
-            WorksheetInfo(name="Converted"), result
-        )
-        measures = [
-            f.caption
-            for f in result.calculated_fields
-            if f.dax_kind == "measure" and f.dax_status == ParseStatus.ok
-        ][:2]
+        entity = _entity_for_worksheet(WorksheetInfo(name="Converted"), result, table_name_by_ds)
+        _cols, model_measures = _model_fields(result, entity, table_name_by_ds)
+        measures = [m for m in model_measures][:2]
         visual = _build_visual_json(
             visual_type="card" if measures else "tableEx",
             entity=entity,
@@ -252,22 +336,27 @@ def build_pbir_files(result: TranspileResult, report_folder: str) -> dict[str, s
             "page.json",
             {"PAGE_NAME": pid, "PAGE_DISPLAY": (ws.name or f"Sheet {idx + 1}")[:100]},
         )
-        entity = _entity_for_worksheet(ws, result)
+        entity = _entity_for_worksheet(ws, result, table_name_by_ds)
+        model_columns, model_measures = _model_fields(result, entity, table_name_by_ds)
         dims: list[str] = []
         measures: list[str] = []
-        for raw in list(ws.rows) + list(ws.cols) + list(ws.used_fields):
-            cap, is_meas = _resolve_caption(raw, result.calculated_fields, entity)
+        for raw in list(ws.rows) + list(ws.cols) + list(ws.used_fields) + list(ws.dimensions):
+            resolved = _resolve_caption(
+                raw, result.calculated_fields, model_columns, model_measures
+            )
+            if resolved is None:
+                continue
+            cap, is_meas = resolved
             if is_meas:
                 if cap not in measures:
                     measures.append(cap)
             else:
                 if cap not in dims and cap not in measures:
                     dims.append(cap)
-        # Prefer worksheet dimensions list
-        for d in ws.dimensions:
-            cap = _field_caption(d)
-            if cap not in dims and cap not in measures:
-                dims.insert(0, cap)
+        # If shelves empty after filtering, bind first real columns
+        if not dims and not measures:
+            dims = list(model_columns)[:3]
+            measures = list(model_measures)[:2]
         vtype = _choose_visual_type(ws, len(dims), len(measures))
         visual = _build_visual_json(
             visual_type=vtype,
@@ -282,9 +371,6 @@ def build_pbir_files(result: TranspileResult, report_folder: str) -> dict[str, s
         files[f"{base}/pages/{pid}/visuals/{vid}/visual.json"] = (
             json.dumps(visual, indent=2, ensure_ascii=False) + "\n"
         )
-        # Caveat note file for mapping limits
-        if vtype != "tableEx" and not (_VENDOR_VISUALS / f"{vtype}.visual.json").is_file():
-            pass  # pattern synthesized; vendor file optional
 
     if not page_ids:
         page_ids = ["page1"]

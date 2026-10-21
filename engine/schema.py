@@ -187,6 +187,7 @@ class CalculatedField(BaseModel):
     dax_status: ParseStatus | None = None
     dax_kind: str | None = None
     sql_kind: str | None = None  # "row" | "aggregate" when status is ok
+    dax_notes: list[str] = Field(default_factory=list)  # missing-column TODOs, etc.
 
     @property
     def raw_formula(self) -> str:

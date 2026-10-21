@@ -156,9 +156,40 @@ def transpile(
 
         for ident in order:
             raw = raw_by_ident[ident]
+            current_keys = set(_calc_keys(raw.name, raw.caption))
+
+            if getattr(raw, "is_table_calc", False):
+                sheet = getattr(raw, "worksheet", None) or "worksheet"
+                msg = f"Worksheet table calculation on '{sheet}' (no SQL window emitted)"
+                sql = f"-- SKIPPED [table calc]: {raw.formula}"
+                dax = f"// SKIPPED [table calc]: {raw.formula}"
+                for key in current_keys:
+                    calc_sql[key] = sql
+                    calc_dax[key] = dax
+                    calc_status[key] = ParseStatus.skipped
+                    calc_dax_status[key] = ParseStatus.skipped
+                    calc_dax_kind[key] = "measure"
+                fields.append(
+                    CalculatedField(
+                        name=raw.name,
+                        caption=raw.caption,
+                        datatype=raw.datatype,
+                        role=raw.role,
+                        formula=raw.formula,
+                        sql=sql,
+                        status=ParseStatus.skipped,
+                        datasource=raw.datasource_caption or raw.datasource_name,
+                        error=msg,
+                        dax=dax,
+                        dax_status=ParseStatus.skipped,
+                        dax_kind="measure",
+                        sql_kind=None,
+                    )
+                )
+                continue
+
             resolved = resolve_internal_names(raw.formula, name_map)
             grain = view_dims_for_calc(raw.name, raw.caption, workbook.worksheets)
-            current_keys = set(_calc_keys(raw.name, raw.caption))
             sql_failed_dep = None
             dax_failed_dep = None
             for dep in deps.get(ident, set()):

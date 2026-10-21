@@ -244,6 +244,7 @@ function InspectPanel({ result }: { result: TranspileResult }) {
       <div className="flex flex-wrap gap-2 text-sm">
         <Badge>{inspect.counts.fields} fields</Badge>
         <Badge variant="secondary">{inspect.counts.hidden_fields} hidden</Badge>
+        <Badge variant="outline">{inspect.counts.calculated_fields} calculated</Badge>
         <Badge variant="outline">{inspect.counts.parameters} parameters</Badge>
         <Badge variant="outline">{inspect.counts.dashboards} dashboards</Badge>
       </div>

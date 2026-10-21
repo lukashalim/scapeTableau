@@ -172,15 +172,23 @@ def transpile(
             current_keys = set(_calc_keys(raw.name, raw.caption))
 
             if getattr(raw, "is_table_calc", False):
+                from engine.pbip.table_calcs import transpile_table_calc_formula
+
                 sheet = getattr(raw, "worksheet", None) or "worksheet"
-                msg = f"Worksheet table calculation on '{sheet}' (no SQL window emitted)"
                 sql = f"-- SKIPPED [table calc]: {raw.formula}"
-                dax = f"// SKIPPED [table calc]: {raw.formula}"
+                mapped = transpile_table_calc_formula(raw.formula, dax_table=dax_table)
+                dax = mapped.dax
+                dax_status = mapped.status
+                sql_status = ParseStatus.skipped
+                msg = (
+                    f"Worksheet table calculation on '{sheet}' "
+                    f"({mapped.disposition}: {mapped.reason})"
+                )
                 for key in current_keys:
                     calc_sql[key] = sql
                     calc_dax[key] = dax
-                    calc_status[key] = ParseStatus.skipped
-                    calc_dax_status[key] = ParseStatus.skipped
+                    calc_status[key] = sql_status
+                    calc_dax_status[key] = dax_status
                     calc_dax_kind[key] = "measure"
                 fields.append(
                     CalculatedField(
@@ -190,11 +198,12 @@ def transpile(
                         role=raw.role,
                         formula=raw.formula,
                         sql=sql,
+                        # SQL stays skipped; Stage 2 may still emit DAX measures.
                         status=ParseStatus.skipped,
                         datasource=raw.datasource_caption or raw.datasource_name,
                         error=msg,
                         dax=dax,
-                        dax_status=ParseStatus.skipped,
+                        dax_status=dax_status,
                         dax_kind="measure",
                         sql_kind=None,
                     )
@@ -329,4 +338,5 @@ def transpile(
         parameters=workbook.parameters,
         measure_names=workbook.measure_names,
         workbook_fields=workbook.fields,
+        joins=workbook.joins,
     )

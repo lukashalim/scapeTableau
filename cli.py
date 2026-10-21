@@ -34,6 +34,7 @@ class OutputFormat(str, Enum):
     all = "all"
     dax = "dax"
     dbt = "dbt"
+    pbip = "pbip"
 
 
 class InspectFormat(str, Enum):
@@ -192,6 +193,39 @@ def inspect_cmd(
         return
     sys.stdout.write(snapshot.model_dump_json(indent=2))
     sys.stdout.write("\n")
+
+
+@app.command("pbip")
+def pbip_cmd(
+    path: str = typer.Argument(..., metavar="PATH", help="Workbook path, or - for stdin."),
+    output: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Write .pbip zip here (Power BI Desktop project folder archive).",
+    ),
+    dialect: str = typer.Option("ansi", "--dialect", help="SQL dialect retained alongside PBIP."),
+) -> None:
+    """Emit a downloadable Power BI Project (.pbip) zip (default migration artifact)."""
+
+    from engine.pbip import transpile_to_pbip
+
+    try:
+        zip_bytes, result = transpile_to_pbip(_read_source(path), dialect=dialect)
+    except WorkbookParseError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:  # pragma: no cover
+        typer.secho(f"PBIP export failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(zip_bytes)
+    typer.secho(
+        f"Wrote PBIP zip ({len(result.calculated_fields)} fields) → {output}",
+        fg=typer.colors.GREEN,
+        err=True,
+    )
 
 
 @app.command("extract")

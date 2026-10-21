@@ -74,7 +74,7 @@ def test_iif_and_zn_dax() -> None:
     assert dax == "IF(Orders[Sales] > 0, Orders[Profit], 0)"
     zn, zn_status, _ = transpile_formula("ZN([Profit])", target="dax")
     assert zn_status == ParseStatus.ok
-    assert zn == "IF(ISBLANK(Orders[Profit]), 0, Orders[Profit])"
+    assert zn == "COALESCE(Orders[Profit], 0)"
 
 
 def test_lod_dax_calculate_allexcept() -> None:
@@ -224,10 +224,15 @@ def test_worksheet_table_calcs_listed_as_skipped() -> None:
     assert "table calc" in (profit.error or "").lower()
     assert "-- SKIPPED [table calc]" in profit.sql
     assert "Table (Across)" in profit.sql
+    # Stage 2: DAX % of Total approximation while SQL remains skipped.
+    assert profit.dax_status == ParseStatus.ok
+    assert "DIVIDE(" in (profit.dax or "")
+    assert "ALLSELECTED" in (profit.dax or "")
 
     revenue = captions["% of Total Total Revenue"]
     assert revenue.formula == "% of Total SUM(Total Revenue) along Table (Across)"
     assert revenue.status == ParseStatus.skipped
+    assert revenue.dax_status == ParseStatus.ok
 
     dumped = json.loads(result.model_dump_json())
     dumped_captions = {f["caption"] for f in dumped["calculated_fields"]}

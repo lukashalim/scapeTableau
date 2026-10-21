@@ -9,9 +9,11 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import unquote
 
 from engine import extract_to_xlsx, transpile
+from engine.pbip import build_pbip_zip
 from engine.schema import WorkbookParseError
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PBIP_TYPE = "application/zip"
 
 
 def _json_bytes(payload: dict, status: int) -> tuple[int, bytes]:
@@ -68,6 +70,26 @@ def extract_payload(filename: str, payload: bytes) -> tuple[int, bytes, str]:
     return 200, xlsx, XLSX_TYPE
 
 
+def pbip_payload(filename: str, payload: bytes) -> tuple[int, bytes, str]:
+    name = filename.lower()
+    if not name.endswith(".twb") and not name.endswith(".twbx"):
+        status, body = _json_bytes({"error": "Only .twb and .twbx workbooks are accepted."}, 400)
+        return status, body, "application/json; charset=utf-8"
+    if not payload:
+        status, body = _json_bytes({"error": "File is empty."}, 400)
+        return status, body, "application/json; charset=utf-8"
+    try:
+        result = transpile(payload)
+        zip_bytes = build_pbip_zip(result)
+    except WorkbookParseError as exc:
+        status, body = _json_bytes({"error": exc.message}, 400)
+        return status, body, "application/json; charset=utf-8"
+    except Exception as exc:  # noqa: BLE001
+        status, body = _json_bytes({"error": str(exc)}, 400)
+        return status, body, "application/json; charset=utf-8"
+    return 200, zip_bytes, PBIP_TYPE
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 — Vercel Python entrypoint
         length = int(self.headers.get("Content-Length") or 0)
@@ -80,6 +102,8 @@ class handler(BaseHTTPRequestHandler):
             ctype = "application/json; charset=utf-8"
         elif path.rstrip("/").endswith("/extract"):
             status, payload, ctype = extract_payload(*upload)
+        elif path.rstrip("/").endswith("/pbip"):
+            status, payload, ctype = pbip_payload(*upload)
         else:
             status, payload = transpile_payload(*upload)
             ctype = "application/json; charset=utf-8"
@@ -88,6 +112,8 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         if ctype == XLSX_TYPE:
             self.send_header("Content-Disposition", 'attachment; filename="scapetableau-extract.xlsx"')
+        elif ctype == PBIP_TYPE:
+            self.send_header("Content-Disposition", 'attachment; filename="escapetableau.pbip.zip"')
         self.end_headers()
         self.wfile.write(payload)
 

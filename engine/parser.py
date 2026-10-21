@@ -24,6 +24,7 @@ from engine.schema import (
     DashboardInfo,
     DashboardZone,
     DatasourceInfo,
+    JoinInfo,
     ParameterInfo,
     ParsedWorkbook,
     RawCalculatedField,
@@ -595,6 +596,7 @@ def _parse_table_calcs(
                     datasource_caption=ds_caption,
                     is_table_calc=True,
                     worksheet=sheet_name,
+                    table_calc_type=calc_type,
                 )
             )
             fields.append(
@@ -729,4 +731,81 @@ def parse_workbook(source: Source) -> ParsedWorkbook:
         fields=all_fields,
         worksheets=_parse_worksheets(root),
         measure_names=measure_names,
+        joins=_parse_joins(root, datasources),
     )
+
+
+def _parse_joins(root: ET.Element, datasources: list[DatasourceInfo]) -> list[JoinInfo]:
+    """Extract Tableau join clauses into JoinInfo rows.
+
+    Tableau stores joins as ``<relation type='join'>`` (with nested ``<clause>``)
+    and sometimes as a ``<join>`` element.
+    """
+
+    ds_by_rel: dict[str, str] = {}
+    for ds in datasources:
+        caption = ds.caption or ds.name
+        ds_by_rel[ds.name] = caption
+        if ds.caption:
+            ds_by_rel[ds.caption] = caption
+        for rel in ds.relations:
+            if rel.name:
+                ds_by_rel[rel.name] = caption
+            if rel.table:
+                ds_by_rel[rel.table] = caption
+                bare = rel.table.strip("[]")
+                ds_by_rel[bare] = caption
+
+    joins: list[JoinInfo] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def _consume_join_el(el: ET.Element, join_type: str | None) -> None:
+        clauses = [c for c in el.iter() if _local_tag(c.tag) == "clause"]
+        for clause in clauses:
+            fields = [
+                e.get("op")
+                for e in clause.iter()
+                if _local_tag(e.tag) == "expression" and (e.get("op") or "").startswith("[")
+            ]
+            if len(fields) < 2:
+                continue
+            left_raw, right_raw = fields[0], fields[1]
+            left_ds, left_col = _split_join_field(left_raw, ds_by_rel)
+            right_ds, right_col = _split_join_field(right_raw, ds_by_rel)
+            if not left_col or not right_col:
+                continue
+            key = (left_ds, right_ds, left_col, right_col)
+            if key in seen:
+                continue
+            seen.add(key)
+            joins.append(
+                JoinInfo(
+                    left_datasource=left_ds,
+                    right_datasource=right_ds,
+                    left_column=left_col,
+                    right_column=right_col,
+                    join_type=join_type,
+                )
+            )
+
+    for el in root.iter():
+        tag = _local_tag(el.tag)
+        if tag == "join":
+            _consume_join_el(el, el.get("type") or el.get("join"))
+        elif tag == "relation" and (el.get("type") or "").lower() == "join":
+            _consume_join_el(el, el.get("join") or el.get("type"))
+    return joins
+
+
+def _split_join_field(raw: str | None, ds_by_rel: dict[str, str]) -> tuple[str, str]:
+    """Parse ``[Table].[Column]`` into (datasource_or_table, column)."""
+
+    text = (raw or "").strip()
+    parts = re.findall(r"\[([^\]]+)\]", text)
+    if len(parts) >= 2:
+        table, column = parts[0], parts[1]
+        ds = ds_by_rel.get(table) or ds_by_rel.get(f"[{table}]") or table
+        return ds, column
+    if len(parts) == 1:
+        return "Table", parts[0]
+    return "Table", text.strip("[]")

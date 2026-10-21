@@ -18,6 +18,7 @@ from engine.schema import (
     DatasourceInfo,
     ExtractInventory,
     InspectSnapshot,
+    JoinInfo,
     MeasureNamesUsage,
     ParameterInfo,
     ParseStatus,
@@ -502,6 +503,7 @@ def assemble_result(
     parameters: list[ParameterInfo] | None = None,
     measure_names: list[MeasureNamesUsage] | None = None,
     workbook_fields: list[ColumnField] | None = None,
+    joins: list[JoinInfo] | None = None,
 ) -> TranspileResult:
     usages = list(measure_names or [])
     return TranspileResult(
@@ -534,4 +536,5 @@ def assemble_result(
         target=target,
         measure_names=usages,
         conversion_summary=build_conversion_summary(usages),
+        joins=list(joins or []),
     )

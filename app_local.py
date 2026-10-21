@@ -94,6 +94,16 @@ with transpile_tab:
         else:
             st.dataframe(frame, use_container_width=True)
     with download_tab:
+        from engine.pbip import build_pbip_zip
+
+        pbip_zip = build_pbip_zip(result)
+        st.download_button(
+            "Download Power BI project (.pbip.zip) — default",
+            data=pbip_zip,
+            file_name=f"{(result.workbook_name or 'escapetableau')}.pbip.zip",
+            mime="application/zip",
+        )
+        st.caption("Unzip, then open the `.pbip` file in Power BI Desktop. SQL remains available below.")
         st.download_button(
             "Download SQL",
             data=result.sql_script.encode("utf-8"),

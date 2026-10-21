@@ -480,6 +480,38 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     URL.revokeObjectURL(url);
   }, [result]);
 
+  const downloadPbip = useCallback(async () => {
+    if (!heldFile) {
+      toast.error("Re-drop the workbook to download the Power BI project.");
+      return;
+    }
+    try {
+      const body = new FormData();
+      body.append("file", heldFile, heldFile.name);
+      const response = await fetch("/api/pbip", { method: "POST", body });
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const message =
+          data && typeof data === "object" && "error" in data && typeof data.error === "string"
+            ? data.error
+            : "PBIP export failed.";
+        toast.error(message);
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const base = (fileName || heldFile.name).replace(/\.(twbx?)$/i, "");
+      a.download = `${base || "escapetableau"}.pbip.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Downloaded Power BI project (.pbip.zip) — unzip and open the .pbip in Desktop");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "PBIP download failed.");
+    }
+  }, [heldFile, fileName]);
+
   const okCount = result?.calculated_fields.filter((f) => f.status === "ok").length ?? 0;
 
   return (
@@ -635,10 +667,14 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="sql" className="mt-3 space-y-2">
-                  <div className="flex justify-end">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button size="sm" onClick={() => void downloadPbip()}>
+                      <Download data-icon="inline-start" />
+                      Download .pbip
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => void copySql()}>
                       {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                      {copied ? "Copied" : "Copy"}
+                      {copied ? "Copied" : "Copy SQL"}
                     </Button>
                   </div>
                   <div className="overflow-hidden rounded-xl border">

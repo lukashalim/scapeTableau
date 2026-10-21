@@ -1,0 +1,21 @@
+table __Measures
+	lineageTag: ${TABLE_LINEAGE}
+
+${MEASURES}
+
+	column Dummy
+		dataType: int64
+		isHidden
+		lineageTag: ${DUMMY_LINEAGE}
+		summarizeBy: none
+		sourceColumn: Dummy
+
+		annotation SummarizationSetBy = Automatic
+
+	partition __Measures = m
+		mode: import
+		source =
+			let
+			    Source = Table.FromRecords({[Dummy = 1]})
+			in
+			    Source

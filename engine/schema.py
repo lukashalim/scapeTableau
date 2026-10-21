@@ -46,6 +46,16 @@ class RelationInfo(BaseModel):
     custom_sql: str | None = None
 
 
+class JoinInfo(BaseModel):
+    """Tableau join clause mapped to a Power BI many-to-one relationship."""
+
+    left_datasource: str
+    right_datasource: str
+    left_column: str
+    right_column: str
+    join_type: str | None = None  # inner | left | right | full
+
+
 class ColumnField(BaseModel):
     name: str
     caption: str
@@ -202,6 +212,7 @@ class TranspileResult(BaseModel):
     target: str = "sql"
     measure_names: list[MeasureNamesUsage] = Field(default_factory=list)
     conversion_summary: str = ""
+    joins: list[JoinInfo] = Field(default_factory=list)
 
     def model_dump_json_result(self) -> str:
         return self.model_dump_json(indent=2)
@@ -217,9 +228,10 @@ class RawCalculatedField(BaseModel):
     formula: str
     datasource_name: str
     datasource_caption: str | None = None
-    # Worksheet <table-calc> pills (percent of total, etc.) — listed, not SQL-translated.
+    # Worksheet <table-calc> pills (percent of total, etc.) — listed; Stage 2 emits DAX.
     is_table_calc: bool = False
     worksheet: str | None = None
+    table_calc_type: str | None = None
 
 
 class ParsedWorkbook(BaseModel):
@@ -234,3 +246,4 @@ class ParsedWorkbook(BaseModel):
     fields: list[ColumnField] = Field(default_factory=list)
     worksheets: list[WorksheetInfo] = Field(default_factory=list)
     measure_names: list[MeasureNamesUsage] = Field(default_factory=list)
+    joins: list[JoinInfo] = Field(default_factory=list)

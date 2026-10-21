@@ -46,7 +46,7 @@ EXPECTED_KIND = {
     "Nested Min Category": "measure",
     "First Purchase Date": "calculated_column",
     "Days Since First Purchase": "calculated_column",
-    "Sales Mix": "calculated_column",
+    "Sales Mix": "measure",
     "Scaled Sales": "calculated_column",
     "Next Month": "calculated_column",
 }
@@ -139,6 +139,7 @@ def test_exclude_and_fixed_none_dax_formula() -> None:
     exc, est, eerr = transpile_formula(
         "SUM({EXCLUDE [Sub-Category]: SUM([Sales])})",
         target="dax",
+        context=FormulaContext(view_dims=["Region", "Sub-Category"]),
     )
     assert est == ParseStatus.ok, eerr
     assert exc == EXPECTED_DAX["Exclude Sub-Category Sales"]

@@ -1,0 +1,199 @@
+"""Power Query M partition expressions for Tableau datasources."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+from engine.schema import ConnectionInfo, DatasourceInfo, RelationInfo
+
+
+@dataclass
+class MPartitionPlan:
+    source_kind: str  # csv | postgres | sqlserver | custom_sql | hyper | unknown
+    expression: str
+    parameters: list[tuple[str, str, str]]  # (name, kind, expression)
+    notes: list[str]
+
+
+def _safe_param(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", (name or "Source").strip())
+    if not cleaned or cleaned[0].isdigit():
+        cleaned = "P_" + cleaned
+    return cleaned
+
+
+def _primary_connection(ds: DatasourceInfo) -> ConnectionInfo | None:
+    for conn in ds.connections:
+        cls = (conn.class_name or "").lower()
+        if cls and cls != "federated":
+            return conn
+    return ds.connections[0] if ds.connections else None
+
+
+def _primary_relation(ds: DatasourceInfo) -> RelationInfo | None:
+    for rel in ds.relations:
+        if rel.custom_sql or rel.table or rel.name:
+            return rel
+    return None
+
+
+def _type_transforms(columns: list[tuple[str, str]]) -> str:
+    """Build Table.TransformColumnTypes list from (name, m_type) pairs."""
+
+    if not columns:
+        return "null"
+    parts = []
+    for name, mtype in columns:
+        escaped = name.replace('"', '""')
+        parts.append(f'{{"{escaped}", {mtype}}}')
+    return "{" + ", ".join(parts) + "}"
+
+
+def tableau_type_to_m(datatype: str | None) -> str:
+    dt = (datatype or "string").lower()
+    if dt in {"integer", "int"}:
+        return "Int64.Type"
+    if dt in {"real", "float", "double", "number"}:
+        return "type number"
+    if dt in {"date"}:
+        return "type date"
+    if dt in {"datetime", "timestamp"}:
+        return "type datetime"
+    if dt in {"boolean", "bool"}:
+        return "type logical"
+    return "type text"
+
+
+def plan_m_partition(
+    ds: DatasourceInfo,
+    *,
+    table_name: str,
+    column_types: list[tuple[str, str]],
+) -> MPartitionPlan:
+    conn = _primary_connection(ds)
+    rel = _primary_relation(ds)
+    notes: list[str] = []
+    params: list[tuple[str, str, str]] = []
+    cls = ((conn.class_name if conn else None) or "").lower()
+    transforms = _type_transforms(column_types)
+
+    if rel and rel.custom_sql:
+        server = (conn.server if conn else None) or "localhost"
+        dbname = (conn.dbname if conn else None) or "database"
+        # Strip redaction markers for parameter scaffolding; passwords stay out.
+        server_clean = server.split(";")[0]
+        p_server = _safe_param(f"{table_name}_Server")
+        p_db = _safe_param(f"{table_name}_Database")
+        params.append((p_server, "text", f'"{server_clean}" meta [IsParameterQuery=true, Type="Text"]'))
+        params.append((p_db, "text", f'"{dbname}" meta [IsParameterQuery=true, Type="Text"]'))
+        sql = (rel.custom_sql or "").replace('"', '""')
+        if cls in {"sqlserver", "sqlproxy"}:
+            connector = (
+                f'Sql.Database({p_server}, {p_db}, [Query="{sql}"])'
+            )
+            kind = "sqlserver"
+        else:
+            connector = (
+                f'PostgreSQL.Database({p_server}, {p_db}, [Query="{sql}"])'
+                if cls in {"postgres", "postgresql"}
+                else f'Value.NativeQuery(PostgreSQL.Database({p_server}, {p_db}), "{sql}", null, [EnableFolding=true])'
+            )
+            kind = "custom_sql" if cls not in {"postgres", "postgresql"} else "postgres"
+        expr = f"""let
+    Source = {connector},
+    Typed = if {transforms} = null then Source else Table.TransformColumnTypes(Source, {transforms})
+in
+    Typed"""
+        notes.append(f"Custom SQL / live query for '{table_name}' — bind credentials in Desktop.")
+        return MPartitionPlan(kind, expr, params, notes)
+
+    if cls in {"textscan", "text", "csv", "excel-direct"} or (
+        conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv"))
+    ):
+        filename = (conn.filename if conn else None) or f"{table_name}.csv"
+        p_path = _safe_param(f"{table_name}_FilePath")
+        params.append(
+            (
+                p_path,
+                "text",
+                f'"{filename}" meta [IsParameterQuery=true, Type="Text"]',
+            )
+        )
+        expr = f"""let
+    Source = Csv.Document(File.Contents({p_path}), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None]),
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
+in
+    Typed"""
+        return MPartitionPlan("csv", expr, params, notes)
+
+    if cls in {"postgres", "postgresql"}:
+        server = ((conn.server if conn else None) or "localhost").split(";")[0]
+        dbname = (conn.dbname if conn else None) or "database"
+        schema_table = (rel.table if rel else None) or f"[public].[{table_name}]"
+        # Tableau [schema].[table] → schema/table
+        parts = re.findall(r"\[([^\]]+)\]", schema_table) or [table_name]
+        schema = parts[0] if len(parts) > 1 else "public"
+        table = parts[-1]
+        p_server = _safe_param(f"{table_name}_Server")
+        p_db = _safe_param(f"{table_name}_Database")
+        params.append((p_server, "text", f'"{server}" meta [IsParameterQuery=true, Type="Text"]'))
+        params.append((p_db, "text", f'"{dbname}" meta [IsParameterQuery=true, Type="Text"]'))
+        expr = f"""let
+    Source = PostgreSQL.Database({p_server}, {p_db}),
+    Nav = Source{{[Schema="{schema}", Item="{table}"]}}[Data],
+    Typed = if {transforms} = null then Nav else Table.TransformColumnTypes(Nav, {transforms})
+in
+    Typed"""
+        return MPartitionPlan("postgres", expr, params, ["Postgres live connection — set credentials in Desktop."])
+
+    if cls in {"sqlserver", "sqlproxy"}:
+        server = ((conn.server if conn else None) or "localhost").split(";")[0]
+        dbname = (conn.dbname if conn else None) or "database"
+        parts = re.findall(r"\[([^\]]+)\]", (rel.table if rel else None) or table_name) or [table_name]
+        schema = parts[0] if len(parts) > 1 else "dbo"
+        table = parts[-1]
+        p_server = _safe_param(f"{table_name}_Server")
+        p_db = _safe_param(f"{table_name}_Database")
+        params.append((p_server, "text", f'"{server}" meta [IsParameterQuery=true, Type="Text"]'))
+        params.append((p_db, "text", f'"{dbname}" meta [IsParameterQuery=true, Type="Text"]'))
+        expr = f"""let
+    Source = Sql.Database({p_server}, {p_db}),
+    Nav = Source{{[Schema="{schema}", Item="{table}"]}}[Data],
+    Typed = if {transforms} = null then Nav else Table.TransformColumnTypes(Nav, {transforms})
+in
+    Typed"""
+        return MPartitionPlan("sqlserver", expr, params, ["SQL Server live connection — set credentials in Desktop."])
+
+    if cls == "hyper" or (conn and conn.dbname and str(conn.dbname).lower().endswith(".hyper")):
+        hyper_path = (conn.dbname if conn else None) or (conn.filename if conn else None) or "extract.hyper"
+        p_path = _safe_param(f"{table_name}_CsvPlaceholder")
+        params.append(
+            (
+                p_path,
+                "text",
+                f'"{table_name}.csv" meta [IsParameterQuery=true, Type="Text"]',
+            )
+        )
+        notes.append(
+            f"Hyper extract '{hyper_path}' is not loaded into PBIP. "
+            f"Bind parameter {p_path} to an exported CSV (or use the desktop Hyper→Excel converter)."
+        )
+        expr = f"""let
+    // TODO: Replace Hyper extract with CSV export — original: {hyper_path}
+    Source = Csv.Document(File.Contents({p_path}), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None]),
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
+in
+    Typed"""
+        return MPartitionPlan("hyper", expr, params, notes)
+
+    # Fallback empty table with typed columns
+    notes.append(f"Unknown connection class '{cls or 'none'}' for '{table_name}' — empty typed stub.")
+    col_names = ", ".join(f'"{n}"' for n, _ in column_types) or '"Column1"'
+    expr = f"""let
+    Source = #table({{{col_names}}}, {{}})
+in
+    Source"""
+    return MPartitionPlan("unknown", expr, params, notes)

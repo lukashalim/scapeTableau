@@ -761,10 +761,11 @@ def _is_row_level_lod(node: LodExpr) -> bool:
 
 
 def _kind_combine(kinds: list[str]) -> str:
-    if "calculated_column" in kinds:
-        return "calculated_column"
+    # Prefer measure when any aggregate/LOD branch is present (Stage 2 Achieved Quota, etc.).
     if "measure" in kinds:
         return "measure"
+    if "calculated_column" in kinds:
+        return "calculated_column"
     return "calculated_column"
 
 
@@ -855,7 +856,11 @@ def classify_sql_kind(node: Node, ctx: FormulaContext | None = None) -> str:
 
 
 def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
-    """measure if the root is an agg/LOD; bare T[Col] anywhere → calculated_column."""
+    """Stage 2: agg/table-calc → measure; row-level → calculated_column.
+
+    IF/SWITCH that contain aggregations (e.g. Achieved Quota) are measures even when
+    parameter literals appear in the same expression.
+    """
 
     ctx = ctx or FormulaContext()
     if isinstance(node, LodExpr):
@@ -870,13 +875,18 @@ def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
         return "calculated_column"
     if isinstance(node, Call):
         fn = node.name.upper()
-        if fn in AGG_FUNCS:
+        if fn in AGG_FUNCS or _is_table_calc_name(fn):
             return "measure"
         if fn in ROW_FUNCS:
             return "calculated_column"
         kinds = [classify_dax_kind(arg, ctx) for arg in node.args]
         return _kind_combine(kinds)
     if isinstance(node, BinaryOp):
+        # Row-level boolean over FIXED LOD (e.g. Order Profitable?) → calculated column.
+        if node.op in {"=", "<>", ">", "<", ">=", "<="} and (
+            _has_lod(node.left) or _has_lod(node.right)
+        ):
+            return "calculated_column"
         return _kind_combine(
             [classify_dax_kind(node.left, ctx), classify_dax_kind(node.right, ctx)]
         )
@@ -1241,11 +1251,11 @@ class Emitter:
         if fn == "ZN":
             if len(args) != 1:
                 raise TranspileFormulaError("ZN expects 1 argument")
-            return f"IF(ISBLANK({args[0]}), 0, {args[0]})"
+            return f"COALESCE({args[0]}, 0)"
         if fn == "IFNULL":
             if len(args) != 2:
                 raise TranspileFormulaError("IFNULL expects 2 arguments")
-            return f"IF(ISBLANK({args[0]}), {args[1]}, {args[0]})"
+            return f"COALESCE({args[0]}, {args[1]})"
         if fn == "ISNULL":
             if len(args) != 1:
                 raise TranspileFormulaError("ISNULL expects 1 argument")
@@ -1270,6 +1280,22 @@ class Emitter:
             if len(args) != 1:
                 raise TranspileFormulaError("COUNTD expects 1 argument")
             return f"DISTINCTCOUNT({args[0]})"
+        if fn == "COUNT":
+            if len(args) != 1:
+                raise TranspileFormulaError("COUNT expects 1 argument")
+            # Prefer COUNTROWS when counting a table grain marker
+            arg0 = args[0]
+            if arg0.endswith("[Number of Records]") or arg0.endswith("[_Number of Records]"):
+                table = arg0.split("[", 1)[0].rstrip()
+                return f"COUNTROWS({table})" if table else f"COUNT({arg0})"
+            return f"COUNT({arg0})"
+        if fn == "ATTR":
+            if len(args) != 1:
+                raise TranspileFormulaError("ATTR expects 1 argument")
+            col = args[0]
+            return f"IF(HASONEVALUE({col}), VALUES({col}), BLANK())"
+        if fn == "AVG":
+            return f"AVERAGE({', '.join(args)})"
         if fn in AGG_FUNCS or fn in PASSTHROUGH:
             return f"{fn}({', '.join(args)})"
         if fn == "TODAY":
@@ -1604,12 +1630,13 @@ class Emitter:
                 return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
             excepts = ", ".join(self._dax_col(d) for d in dim_names)
             return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+        # INCLUDE / EXCLUDE require worksheet grain (raises IncludeExcludeGrainError).
+        grain = self._lod_grain(lod)
         if kind == "EXCLUDE":
             if not dim_names:
                 return inner
             rf = ", ".join(self._dax_col(d) for d in dim_names)
             return f"CALCULATE({inner}, REMOVEFILTERS({rf}))"
-        grain = self._lod_grain(lod)
         iter_fn = DAX_ITER.get(outer_fn, f"{outer_fn}X")
         table_expr = self._dax_summarize(grain)
         return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
@@ -1626,13 +1653,15 @@ class Emitter:
                 return f"CALCULATE({inner}, ALL({table}))"
             excepts = ", ".join(self._dax_col(d) for d in dim_names)
             return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
-        if kind == "INCLUDE":
+        if kind in {"INCLUDE", "EXCLUDE"}:
+            # Stage 2: require worksheet grain for INCLUDE/EXCLUDE; else skip.
             grain = self._lod_grain(lod)
-            if not grain:
-                return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
-            excepts = ", ".join(self._dax_col(d) for d in grain)
-            return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
-        if kind == "EXCLUDE":
+            if kind == "INCLUDE":
+                if not grain:
+                    return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
+                excepts = ", ".join(self._dax_col(d) for d in grain)
+                return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+            # EXCLUDE
             if not dim_names:
                 return inner
             rf = ", ".join(self._dax_col(d) for d in dim_names)

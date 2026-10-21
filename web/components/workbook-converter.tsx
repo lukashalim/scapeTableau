@@ -120,18 +120,17 @@ function ExtractPanel({
   const hasHyper = inventory.hyper_files.length > 0;
   const hyperOnly =
     hasHyper && inventory.tabular_files.length === 0 && inventory.custom_sql.length === 0;
-  const noEmbed = inventory.archive_members.length === 0;
+  const packagedMembers = inventory.archive_members;
+  const hasPackagedMembers = packagedMembers.length > 0;
+  const canDownloadXlsx = inventory.tabular_files.length > 0 && Boolean(file);
 
   return (
     <div className="space-y-4">
-      {noEmbed ? (
-        <Alert>
-          <AlertTitle>No packaged tables</AlertTitle>
-          <AlertDescription>
-            This is a plain .twb (or the sample workbook). Custom SQL still appears below. Pack a .twbx with
-            CSV/TSV/XLS/XLSX for browser Excel extract, or use a .hyper / .tdsx with the desktop converter.
-          </AlertDescription>
-        </Alert>
+      {!hasPackagedMembers ? (
+        <p className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+          No packaged tables in this workbook. Custom SQL still appears below. For Excel extract, use a .twbx
+          with CSV/XLS data or the desktop app for .hyper.
+        </p>
       ) : null}
       {hasHyper ? (
         <Alert>
@@ -164,37 +163,35 @@ function ExtractPanel({
           </AlertDescription>
         </Alert>
       ) : null}
-      {inventory.notes
-        .filter((note) => !/listed only|not converted/i.test(note) || !hasHyper)
-        .map((note) => (
-          <p key={note} className="text-sm text-muted-foreground">
-            {note}
-          </p>
-        ))}
-      <div className="flex justify-end">
-        <Button onClick={() => void downloadXlsx()} disabled={busy || !file}>
-          {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
-          Download .xlsx
-        </Button>
-      </div>
-      <ScrollArea className="h-[280px] rounded-xl border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Path</TableHead>
-              <TableHead>Kind</TableHead>
-              <TableHead>Size</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {inventory.archive_members.length === 0 ? (
+      {hasPackagedMembers
+        ? inventory.notes
+            .filter((note) => !/listed only|not converted/i.test(note) || !hasHyper)
+            .map((note) => (
+              <p key={note} className="text-sm text-muted-foreground">
+                {note}
+              </p>
+            ))
+        : null}
+      {canDownloadXlsx ? (
+        <div className="flex justify-end">
+          <Button onClick={() => void downloadXlsx()} disabled={busy}>
+            {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+            Download .xlsx
+          </Button>
+        </div>
+      ) : null}
+      {hasPackagedMembers ? (
+        <ScrollArea className="h-[280px] rounded-xl border">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={3} className="text-muted-foreground">
-                  No archive members.
-                </TableCell>
+                <TableHead>Path</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead>Size</TableHead>
               </TableRow>
-            ) : (
-              inventory.archive_members.map((member) => (
+            </TableHeader>
+            <TableBody>
+              {packagedMembers.map((member) => (
                 <TableRow key={member.path}>
                   <TableCell className="font-mono text-xs">{member.path}</TableCell>
                   <TableCell>
@@ -202,11 +199,11 @@ function ExtractPanel({
                   </TableCell>
                   <TableCell>{member.size}</TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </ScrollArea>
+              ))}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+      ) : null}
       {inventory.custom_sql.length > 0 ? (
         <div className="space-y-2">
           <h3 className="text-sm font-medium">Custom SQL (not executed)</h3>
@@ -502,7 +499,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
         </header>
       )}
 
-      <Card>
+      <Card className="ring-foreground/15">
         <CardHeader>
           <CardTitle>Workbook</CardTitle>
           <CardDescription>Accepts Tableau Desktop workbooks. Try the synthetic Superstore sample offline.</CardDescription>
@@ -521,7 +518,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
               onFiles(event.dataTransfer.files);
             }}
             className={cn(
-              "flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center transition-colors",
+              "flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-14 text-center transition-colors",
               dragOver ? "border-primary bg-muted/60" : "border-border hover:bg-muted/40",
             )}
           >
@@ -532,17 +529,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
             )}
             <div className="space-y-1">
               <p className="font-medium">Drop a .twb or .twbx here</p>
-              <p className="text-sm text-muted-foreground">
-                or click to browse. Files are not persisted.                 For Hyper → Excel,{" "}
-                <a
-                  href={DESKTOP_RELEASE_URL}
-                  className="underline underline-offset-4"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  download the Windows installer (.exe)
-                </a>
-                .
-              </p>
+              <p className="text-sm text-muted-foreground">or click to browse. Files are not persisted.</p>
             </div>
           </label>
           <input
@@ -556,7 +543,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
               event.target.value = "";
             }}
           />
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <button
               type="button"
               className={buttonVariants()}
@@ -566,6 +553,13 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
               <Sparkles data-icon="inline-start" />
               Try with Sample Workbook
             </button>
+            <a
+              href={DESKTOP_RELEASE_URL}
+              className={cn(buttonVariants({ variant: "outline" }), "inline-flex")}
+            >
+              <Download data-icon="inline-start" />
+              Need Hyper → Excel? Download the Windows desktop app (.exe)
+            </a>
             {fileName ? (
               <p className="text-sm text-muted-foreground">
                 Last file: <span className="text-foreground">{fileName}</span>
@@ -575,16 +569,8 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
         </CardContent>
       </Card>
 
-      {state === "empty" ? (
-        <Card className="border-dashed">
-          <CardContent className="py-12 text-center text-muted-foreground">
-            Drop a workbook to transpile SQL, extract packaged tables, and inspect schema.
-          </CardContent>
-        </Card>
-      ) : null}
-
       {state === "loading" ? (
-        <Card>
+        <Card className="bg-muted/20">
           <CardContent className="flex items-center gap-3 py-10 text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
             Transpiling calculated fields with the local Python engine…
@@ -601,7 +587,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
       ) : null}
 
       {state === "success" && result ? (
-        <div className="space-y-4">
+        <div className="space-y-4 rounded-xl bg-muted/15 p-4 ring-1 ring-foreground/10 md:p-5">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Badge>{result.calculated_fields.length} fields</Badge>
             <Badge variant="secondary">{okCount} ok</Badge>
@@ -611,20 +597,22 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
             ) : null}
           </div>
           <Tabs defaultValue="transpile">
-            <TabsList>
-              <TabsTrigger value="transpile">
-                <FileCode2 data-icon="inline-start" />
-                Transpile to SQL/dbt
-              </TabsTrigger>
-              <TabsTrigger value="extract">
-                <FileSpreadsheet data-icon="inline-start" />
-                Extract Data
-              </TabsTrigger>
-              <TabsTrigger value="inspect">
-                <Search data-icon="inline-start" />
-                Inspect Schema
-              </TabsTrigger>
-            </TabsList>
+            <div className="rounded-lg border bg-background/80 p-2">
+              <TabsList className="h-auto w-full flex-wrap justify-start">
+                <TabsTrigger value="transpile">
+                  <FileCode2 data-icon="inline-start" />
+                  Transpile to SQL/dbt
+                </TabsTrigger>
+                <TabsTrigger value="extract">
+                  <FileSpreadsheet data-icon="inline-start" />
+                  Extract Data
+                </TabsTrigger>
+                <TabsTrigger value="inspect">
+                  <Search data-icon="inline-start" />
+                  Inspect Schema
+                </TabsTrigger>
+              </TabsList>
+            </div>
             <TabsContent value="transpile" className="mt-3">
               <Tabs defaultValue="sql">
                 <TabsList>

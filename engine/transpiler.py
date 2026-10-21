@@ -215,6 +215,15 @@ class IncludeExcludeGrainError(Exception):
         self.message = message
 
 
+class NestedLodSkip(Exception):
+    """Nested LOD expressions are out of scope for v1 FIXED support."""
+
+    def __init__(self, raw: str, message: str = "Nested LOD not supported") -> None:
+        super().__init__(message)
+        self.raw = raw
+        self.message = message
+
+
 def quote_ident(name: str, dialect: str = "ansi") -> str:
     cleaned = name.strip()
     dialect_l = dialect.lower()
@@ -1433,7 +1442,8 @@ class Emitter:
         kind = lod.kind.upper()
         if kind == "FIXED":
             return dim_names
-        if self.ctx.view_dims is None:
+        # INCLUDE/EXCLUDE need worksheet grain; None or [] means unknown/absent.
+        if not self.ctx.view_dims:
             raise IncludeExcludeGrainError()
         view = list(self.ctx.view_dims)
         if kind == "INCLUDE":
@@ -1488,15 +1498,13 @@ class Emitter:
         return node
 
     def _sql_lod(self, lod: LodExpr) -> str:
+        if _has_lod(lod.agg):
+            raise NestedLodSkip(self.ctx.original_formula or str(lod))
         grain = self._lod_grain(lod)
         grain_sql = [quote_ident(g, self.dialect) for g in grain]
         partition = f"PARTITION BY {', '.join(grain_sql)}" if grain_sql else ""
         over = f"OVER ({partition})" if partition else "OVER ()"
-        nested = _has_lod(lod.agg)
         countd = _has_countd(lod.agg)
-        if nested:
-            self.lod_cte = True
-            return self._nested_lod_subquery(lod, grain)
         if countd:
             self.lod_cte = True
             return self._lod_subquery(lod, grain_sql)
@@ -1511,20 +1519,22 @@ class Emitter:
     ) -> str:
         """GROUP BY LOD grain, then apply outer agg — one value per group, not row-weighted.
 
-        Nested FIXED example: ``{FIXED [Region]: AVG({FIXED [Customer Name]: SUM([Sales])})}``
-        groups the inner FIXED by Customer Name (all-region totals), restricts to customers
-        present in the outer Region via IN-select, then AVG of those customer totals.
-        Matches DAX ``AVERAGEX(VALUES(Customer Name), ...)`` — not Tableau row-weighted AVG.
+        Top-level ``AVG({FIXED [Customer]: SUM([Sales])})`` is an uncorrelated subquery
+        (GROUP BY Customer, no WHERE). INCLUDE/EXCLUDE outer aggs still correlate to the
+        worksheet grain when present.
         """
 
+        if _has_lod(lod.agg):
+            raise NestedLodSkip(self.ctx.original_formula or str(lod))
         table = quote_table_ref(self.ctx.source_table or "Orders", self.dialect)
         alias = "_lod"
         kind = lod.kind.upper()
         own_dims = [self._dim_name(d) for d in lod.dims]
         if kind == "FIXED":
             group_dims = own_dims
+            # Outer AVG/MIN/MAX over FIXED is a scalar over the FIXED grain — no row corr.
             if correlate_dims is None:
-                correlate_dims = list(own_dims)
+                correlate_dims = []
         else:
             group_dims = self._lod_grain(lod)
             if correlate_dims is None:
@@ -1563,17 +1573,6 @@ class Emitter:
         inner_select = f"SELECT {inner_agg} AS lod_inner FROM {table} AS {alias}{where}{group}"
         return f"(SELECT {outer_expr} FROM ({inner_select}) AS _lod_n)"
 
-    def _nested_lod_subquery(self, lod: LodExpr, outer_grain: list[str]) -> str:
-        agg = lod.agg
-        if isinstance(agg, Call) and agg.args:
-            inner = self._unwrap(agg.args[0])
-            if isinstance(inner, LodExpr):
-                return self._grouped_agg_over_lod(
-                    agg.name.upper(), inner, correlate_dims=outer_grain
-                )
-        grain_sql = [quote_ident(g, self.dialect) for g in outer_grain]
-        return self._lod_subquery(lod, grain_sql)
-
     def _dax_summarize(self, dims: list[str]) -> str:
         table = self._dax_table()
         if not dims:
@@ -1589,20 +1588,22 @@ class Emitter:
         return self.emit_dax(node)
 
     def _dax_agg_over_lod(self, outer_fn: str, lod: LodExpr) -> str:
+        if _has_lod(lod.agg):
+            raise NestedLodSkip(self.ctx.original_formula or str(lod))
         kind = lod.kind.upper()
         inner = self._dax_agg_expr(lod.agg)
         table = self._dax_table()
         dim_names = [self._dim_name(d) for d in lod.dims]
         if kind == "FIXED":
             if not dim_names:
-                return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
-            excepts = ", ".join(self._dax_col(d) for d in dim_names)
-            calc = f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+                return f"CALCULATE({inner}, ALL({table}))"
+            # Outer AVG({FIXED [Dim]: SUM(...)}) → AVERAGEX(VALUES(Dim), CALCULATE(SUM(...)))
             if outer_fn in {"AVG", "MIN", "MAX", "COUNT"}:
                 iter_fn = DAX_ITER.get(outer_fn, f"{outer_fn}X")
                 table_expr = self._dax_summarize(dim_names)
-                return f"{iter_fn}({table_expr}, {calc})"
-            return calc
+                return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
+            excepts = ", ".join(self._dax_col(d) for d in dim_names)
+            return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
         if kind == "EXCLUDE":
             if not dim_names:
                 return inner
@@ -1614,24 +1615,15 @@ class Emitter:
         return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
 
     def _dax_lod(self, lod: LodExpr) -> str:
+        if _has_lod(lod.agg):
+            raise NestedLodSkip(self.ctx.original_formula or str(lod))
         table = self._dax_table()
         kind = lod.kind.upper()
-        agg = lod.agg
-        if isinstance(agg, Call) and agg.args and isinstance(self._unwrap(agg.args[0]), LodExpr):
-            inner_lod = self._unwrap(agg.args[0])
-            body = self._dax_agg_over_lod(agg.name.upper(), inner_lod)
-            if kind == "FIXED":
-                dims = [self._dim_name(d) for d in lod.dims]
-                if not dims:
-                    return f"CALCULATE({body}, REMOVEFILTERS({table}))"
-                excepts = ", ".join(self._dax_col(d) for d in dims)
-                return f"CALCULATE({body}, ALLEXCEPT({table}, {excepts}))"
-            return body
         inner = self._dax_agg_expr(lod.agg)
         dim_names = [self._dim_name(d) for d in lod.dims]
         if kind == "FIXED":
             if not dim_names:
-                return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
+                return f"CALCULATE({inner}, ALL({table}))"
             excepts = ", ".join(self._dax_col(d) for d in dim_names)
             return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
         if kind == "INCLUDE":
@@ -1689,11 +1681,26 @@ def transpile_tree(
                 emitter,
             )
         return text, ParseStatus.ok, None, emitter
+    except NestedLodSkip as exc:
+        raw = (exc.raw or ctx.original_formula).strip()
+        if ctx.target == "dax":
+            return f"// SKIPPED [nested-lod]: {raw}", ParseStatus.skipped, exc.message, emitter
+        return f"-- SKIPPED [nested-lod]: {raw}", ParseStatus.skipped, exc.message, emitter
     except IncludeExcludeGrainError as exc:
         raw = ctx.original_formula
         if ctx.target == "dax":
-            return _todo_dax(raw, "Review LOD logic"), ParseStatus.unparseable, exc.message, emitter
-        return _todo_sql(raw, "Review LOD logic"), ParseStatus.unparseable, exc.message, emitter
+            return (
+                f"// SKIPPED [lod-include/exclude]: {raw}",
+                ParseStatus.skipped,
+                exc.message,
+                emitter,
+            )
+        return (
+            f"-- SKIPPED [lod-include/exclude]: {raw}",
+            ParseStatus.skipped,
+            exc.message,
+            emitter,
+        )
     except LodFallback as exc:
         raw = exc.raw.strip() or ctx.original_formula
         if ctx.target == "dax":

@@ -206,6 +206,28 @@ def _flag_constant_case(sql: str) -> bool:
     return bool(_CONSTANT_CASE_RE.search(sql or ""))
 
 
+def _workbook_has_fixed_lod(fields: list[CalculatedField]) -> bool:
+    """True if any calc uses explicit FIXED or bare ``{SUM(...)}`` FIXED-none."""
+
+    for field in fields:
+        formula = field.formula or ""
+        if re.search(r"\{\s*FIXED\b", formula, re.IGNORECASE):
+            return True
+        if re.search(
+            r"\{\s*(SUM|AVG|MIN|MAX|COUNT|COUNTD|ATTR)\s*\(",
+            formula,
+            re.IGNORECASE,
+        ):
+            return True
+    return False
+
+
+FIXED_SLICER_WARNING = (
+    "Tableau FIXED ignores dimension filters except context filters; "
+    "Power BI slicers will affect results unless handled."
+)
+
+
 def build_sql_script(
     fields: list[CalculatedField],
     datasources: list[DatasourceInfo],
@@ -233,6 +255,8 @@ def build_sql_script(
         "-- Files were parsed in memory; review LOD / unmapped functions before running."
     )
     lines.append("-- One view per datasource (SELECT * + row-level calc columns).")
+    if _workbook_has_fixed_lod(fields):
+        lines.append(f"-- WARNING: {FIXED_SLICER_WARNING}")
     lines.append("")
     lines.extend(_parameter_comment_block(parameters))
     lines.extend(sql_measure_names_comments(list(measure_names or [])))
@@ -351,6 +375,8 @@ def build_dax_script(
     lines = ["// BIEscape generated DAX"]
     if workbook_name:
         lines.append(f"// Source workbook: {workbook_name}")
+    if _workbook_has_fixed_lod(fields):
+        lines.append(f"// WARNING: {FIXED_SLICER_WARNING}")
     table = _dax_table_name(fields)
     usages = list(measure_names or [])
     lines.extend(

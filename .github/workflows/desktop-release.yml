@@ -80,13 +80,16 @@ jobs:
         with:
           name: BIEscape Converter ${{ github.ref_name }}
           body: |
-            Unsigned Windows build of **BIEscape Converter** (Electron + local Hyper / TWBX / TDSX → Excel).
+            Unsigned Windows build of **BIEscape Converter** (Electron + local Hyper / TWBX / TDSX → Excel + SQL transpile).
 
             ### Windows
             Download **[BIEscape-Converter-Setup-windows-x64.exe](https://github.com/lukashalim/scapeTableau/releases/latest/download/BIEscape-Converter-Setup-windows-x64.exe)** and run the installer.
             SmartScreen may warn — **More info → Run anyway**.
 
             Conversion runs entirely offline via a bundled Python sidecar (`tableauhyperapi` / hyperd). Hosted biescape.com stays list-only for Hyper.
+
+            ### Sidecar SQL (this release)
+            Includes EscapeTableau SQL generator fixes from `main` (PR #9): multipart `"Extract"."Extract"` quoting, bare `NULL`, float noise collapse (`18.4`), preserved caption characters, and dialect-aware date/boolean SQL.
           files: release-assets/*
           fail_on_unmatched_files: true
         env:

@@ -159,9 +159,10 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
             if full not in names:
                 errors.append(f"{rp}: resourcePackages references missing file {full}")
 
-    # JSON schema smoke for key artifacts
+    # JSON schema smoke for key artifacts.
+    # Top-level .pbip must NOT include "$schema" — Power BI Desktop refuses to open
+    # files that have it. Validate only Desktop's keys (version, artifacts[, settings]).
     schema_map = {
-        ".pbip": "fabric/pbip/pbipProperties/1.0.0/schema.json",
         "definition.pbism": "fabric/item/semanticModel/definitionProperties/1.0.0/schema.json",
         "definition.pbir": "fabric/item/report/definitionProperties/2.0.0/schema.json",
         "version.json": "fabric/item/report/definition/versionMetadata/1.0.0/schema.json",
@@ -176,6 +177,16 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
         try:
             instance = json.loads(content)
         except json.JSONDecodeError:
+            continue
+        if path.endswith(".pbip"):
+            if "$schema" in instance:
+                errors.append(
+                    f"{path}: must not include '$schema' "
+                    "(Power BI Desktop silently refuses to open it)"
+                )
+            for key in ("version", "artifacts"):
+                if key not in instance:
+                    errors.append(f"{path}: missing required key '{key}'")
             continue
         for suffix, schema_rel in schema_map.items():
             if path.endswith(suffix):

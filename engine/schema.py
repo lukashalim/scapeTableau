@@ -107,6 +107,7 @@ class WorksheetInfo(BaseModel):
     cols: list[str] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
     used_fields: list[str] = Field(default_factory=list)
+    mark_class: str | None = None
 
 
 class MeasureNamesUsage(BaseModel):
@@ -213,6 +214,7 @@ class TranspileResult(BaseModel):
     measure_names: list[MeasureNamesUsage] = Field(default_factory=list)
     conversion_summary: str = ""
     joins: list[JoinInfo] = Field(default_factory=list)
+    worksheets: list[WorksheetInfo] = Field(default_factory=list)
 
     def model_dump_json_result(self) -> str:
         return self.model_dump_json(indent=2)

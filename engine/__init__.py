@@ -339,4 +339,5 @@ def transpile(
         measure_names=workbook.measure_names,
         workbook_fields=workbook.fields,
         joins=workbook.joins,
+        worksheets=workbook.worksheets,
     )

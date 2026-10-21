@@ -54,7 +54,9 @@ def test_csv_twb_pbip_shape() -> None:
         f"{sm}/definition/relationships.tmdl",
         f"{sm}/definition/expressions.tmdl",
         f"{report}/definition.pbir",
-        f"{report}/report.json",
+        f"{report}/definition/version.json",
+        f"{report}/definition/report.json",
+        f"{report}/definition/pages/pages.json",
         "CONVERSION_REPORT.md",
     }
     assert required <= names

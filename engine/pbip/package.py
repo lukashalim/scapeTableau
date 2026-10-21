@@ -10,7 +10,13 @@ from io import BytesIO
 from pathlib import Path
 
 from engine.pbip.conversion import ConversionEntry, ConversionReport, disposition_for_field
+from engine.pbip.dax_polish import (
+    hoist_compact_measure_filters,
+    percent_format_string,
+    uniquify_measure_name,
+)
 from engine.pbip.m_partitions import plan_m_partition, tableau_type_to_m
+from engine.pbip.pbir import build_pbir_files, visual_caveats
 from engine.pbip.render import (
     indent_block,
     load_template,
@@ -176,17 +182,19 @@ def _calc_column_block(field: CalculatedField) -> str | None:
     return "\n".join(lines)
 
 
-def _measure_block(field: CalculatedField) -> str:
-    dax = (field.dax or "").strip()
-    fmt = _format_string(field.datatype, "measure") or "#,0.00"
+def _measure_block(field: CalculatedField, *, measure_name: str | None = None) -> str:
+    dax = hoist_compact_measure_filters((field.dax or "").strip())
+    pct = percent_format_string(field.caption, field.datatype, dax)
+    fmt = pct or _format_string(field.datatype, "measure") or "#,0.00"
     folder = "Converted measures"
     if "FIXED" in (field.formula or "").upper() or "ALLEXCEPT" in dax.upper() or "ALL(" in dax.upper():
         folder = "LOD"
     if "RANKX" in dax.upper() or "ALLSELECTED" in dax.upper():
         folder = "Table calculations"
+    caption = measure_name or field.caption
     return "\n".join(
         [
-            f"\tmeasure {tmdl_ident(field.caption)} = {dax}",
+            f"\tmeasure {tmdl_ident(caption)} = {dax}",
             f"\t\tformatString: {fmt}",
             f"\t\tlineageTag: {_lineage()}",
             f"\t\tdisplayFolder: {folder}",
@@ -263,12 +271,13 @@ def _expression_blocks(params: list[tuple[str, str, str]], workbook_params: list
 
 
 def _what_if_tables(parameters: list[ParameterInfo]) -> list[tuple[str, str]]:
-    """Return (table_name, tmdl) for numeric GENERATESERIES what-if and string lists."""
+    """Return (table_name, tmdl) for numeric GENERATESERIES what-if (Franssens pattern)."""
 
     out: list[tuple[str, str]] = []
     for info in parameters:
         caption = info.caption or info.name
-        table = re.sub(r"[^A-Za-z0-9_]", "_", caption) + "_WhatIf"
+        table = (caption or "Parameter").strip() or "Parameter"
+        # Keep readable table names (spaces ok in TMDL quotes) — Franssens style
         dt = (info.datatype or "").lower()
         raw = info.value if info.value not in (None, "") else (info.formula or "0")
         text = str(raw).strip().strip('"')
@@ -278,28 +287,42 @@ def _what_if_tables(parameters: list[ParameterInfo]) -> list[tuple[str, str]]:
             except ValueError:
                 num = 0
             lo = 0 if num >= 0 else num
-            hi = num * 2 if num else 10
-            step = 1 if dt in {"integer", "int"} else max(num / 20, 0.01)
+            hi = max(num * 2, 10) if num else 10
+            step = 1 if dt in {"integer", "int"} else max(abs(num) / 20 if num else 0.1, 0.01)
+            # Percent-looking parameters get % format (Commission Rate pattern)
+            is_pct = any(tok in table.lower() for tok in ("rate", "percent", "%", "pct"))
+            col_fmt = '0.0"%"' if is_pct else ("#,0" if dt in {"integer", "int"} else "#,0.00")
+            meas_fmt = col_fmt
             measure_name = f"{caption} Value"
-            tmdl = f"""table '{table}'
-	lineageTag: {_lineage()}
+            col_name = caption
+            tmdl = f"""/// What-If parameter (Tableau '{caption}'). Franssens GENERATESERIES pattern.
+table '{table.replace("'", "''")}'
 
-	column Value = GENERATESERIES({lo}, {hi}, {step})
-		dataType: double
-		lineageTag: {_lineage()}
-		summarizeBy: none
-
-	measure '{measure_name}' = SELECTEDVALUE('{table}'[Value], {num})
-		formatString: #,0.00
-		lineageTag: {_lineage()}
+	measure '{measure_name.replace("'", "''")}' = SELECTEDVALUE('{table.replace("'", "''")}'[{col_name.replace("'", "''")}], {num})
+		formatString: {meas_fmt}
 		displayFolder: Parameters
+
+	column '{col_name.replace("'", "''")}'
+		dataType: double
+		formatString: {col_fmt}
+		summarizeBy: none
+		sourceColumn: [Value]
+
+		annotation SummarizationSetBy = Automatic
+
+	partition '{table.replace("'", "''")}' = calculated
+		mode: import
+		source = GENERATESERIES({lo}, {hi}, {step})
+
+	annotation PBI_ResultType = Table
 """
             out.append((table, tmdl))
         elif info.allowed_values:
             rows = ", ".join(f'{{"{v.replace(chr(34), chr(34)+chr(34))}"}}' for v in info.allowed_values[:50])
             measure_name = f"{caption} Value"
             default = text.replace('"', '""')
-            tmdl = f"""table '{table}'
+            safe = re.sub(r"[^A-Za-z0-9_]", "_", caption) + "_WhatIf"
+            tmdl = f"""table '{safe}'
 	lineageTag: {_lineage()}
 
 	column Value
@@ -308,11 +331,11 @@ def _what_if_tables(parameters: list[ParameterInfo]) -> list[tuple[str, str]]:
 		summarizeBy: none
 		sourceColumn: Value
 
-	measure '{measure_name}' = SELECTEDVALUE('{table}'[Value], "{default}")
+	measure '{measure_name.replace("'", "''")}' = SELECTEDVALUE('{safe}'[Value], "{default}")
 		lineageTag: {_lineage()}
 		displayFolder: Parameters
 
-	partition '{table}' = m
+	partition '{safe}' = m
 		mode: import
 		source =
 			let
@@ -320,7 +343,7 @@ def _what_if_tables(parameters: list[ParameterInfo]) -> list[tuple[str, str]]:
 			in
 			    Source
 """
-            out.append((table, tmdl))
+            out.append((safe, tmdl))
     return out
 
 
@@ -341,13 +364,31 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
     all_params: list[tuple[str, str, str]] = []
     table_name_by_ds: dict[str, str] = {}
     measure_blocks: list[str] = []
+    used_measure_names: set[str] = set()
 
     parameters = list(result.inspect.parameters) if result.inspect else []
     for info in parameters:
         report.parameter_notes.append(
             f"Parameter '{info.caption}' → what-if / disconnected table + SELECTEDVALUE "
-            f"(was inlined as workbook constant in SQL)."
+            f"(Franssens GENERATESERIES pattern; was inlined as workbook constant in SQL)."
         )
+
+    for caveat in visual_caveats():
+        report.notes.append(caveat)
+    report.notes.append(
+        "TMDL/PBIR templates follow vendored Franssens patterns "
+        "(compatLevel 1702, pbism 4.2, PBIR definition/ pages). See docs/third-party-pbip.md."
+    )
+    try:
+        from engine.sqlglot_util import custom_sql_notes
+
+        for note in custom_sql_notes(result.datasources):
+            status = "ok" if note.ok else "unparsed"
+            report.notes.append(
+                f"Custom SQL [{status}] {note.datasource}/{note.name}: {note.detail}"
+            )
+    except Exception:
+        pass
 
     for ds in result.datasources:
         if (ds.name or "").lower() == "parameters":
@@ -371,8 +412,10 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
         for field in _fields_for_ds(result, ds):
             disp, reason = disposition_for_field(field)
             kind = field.dax_kind or "calculated_column"
+            polished = hoist_compact_measure_filters(field.dax or "")
             if _measure_eligible(field):
-                measure_blocks.append(_measure_block(field))
+                mname = uniquify_measure_name(field.caption, used_measure_names, table_name)
+                measure_blocks.append(_measure_block(field, measure_name=mname))
                 kind = "measure"
             else:
                 block = _calc_column_block(field)
@@ -383,7 +426,7 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
                     caption=field.caption,
                     datasource=field.datasource,
                     original_formula=field.formula,
-                    dax=field.dax or "",
+                    dax=polished or field.dax or "",
                     kind=kind if field.status == ParseStatus.ok or field.dax_status == ParseStatus.ok else "skipped",
                     disposition=disp,
                     reason=reason,
@@ -408,7 +451,8 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
 
     # What-if parameter tables
     for table, tmdl in _what_if_tables(parameters):
-        files[f"{sm_folder}/definition/tables/{table}.tmdl"] = tmdl
+        safe_whatif = _SAFE_NAME.sub("_", table) or "Parameter"
+        files[f"{sm_folder}/definition/tables/{safe_whatif}.tmdl"] = tmdl
         table_refs.append(f"ref table {tmdl_ident(table)}")
         query_order.append(table)
 
@@ -446,11 +490,8 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
         "definition.pbir.json",
         {"SEMANTIC_MODEL_FOLDER": sm_folder},
     )
-    files[f"{report_folder}/report.json"] = load_template("report.json")
-    if report.hyper_todos:
-        # Surface Hyper TODO in report config comment via a second empty note page is overkill;
-        # keep in CONVERSION_REPORT and model annotations.
-        pass
+    # Stage 3: real PBIR definition/ pages + visuals (Franssens layout)
+    files.update(build_pbir_files(result, report_folder))
 
     files[f"{name}.pbip"] = render_json_template(
         "project.pbip.json",

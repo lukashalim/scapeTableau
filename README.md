@@ -140,8 +140,11 @@ CLI Options for `process`:
 - `--output-dir` / `-o`: Directory to save extracted `.sql`, `.md`, and `.json` artifacts.
 - `--format` / `-f`: Choose output format (`sql`, `markdown`, `json`, `dax`, `dbt`, `all`). Default: `all`.
 - `--target`: `sql` (default) or `dax` for status emphasis. JSON always includes both `sql` and `dax`.
-- `--dialect`: `ansi` | `snowflake` | `postgres` | `duckdb` | `dax`.
+- `--dialect`: `ansi` | `snowflake` | `postgres` | `duckdb` | `bigquery` | `tsql` | `dax`. BigQuery rewrites the view script via [sqlglot](https://github.com/tobymao/sqlglot); Snowflake/T-SQL stay engine-native.
 - `--print-summary`: Displays a clean terminal table of all extracted fields.
+- `python cli.py pbip workbook.twbx -o out.pbip.zip`: Power BI Project zip (TMDL + PBIR Stage 1–3).
+
+Third-party PBIP/SQL libraries (sqlglot, DuckDB tests, microsoft/json-schemas, TE2, etc.): see [docs/third-party-pbip.md](docs/third-party-pbip.md).
 
 ### 3. Streamlit Offline GUI
 

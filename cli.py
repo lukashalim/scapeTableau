@@ -119,7 +119,8 @@ def process(
     dialect: str = typer.Option(
         "ansi",
         "--dialect",
-        help="ansi | snowflake | postgres | duckdb | tsql | dax",
+        help="ansi | snowflake | postgres | duckdb | bigquery | tsql | dax "
+        "(bigquery uses sqlglot rewrite; snowflake/tsql are engine-native)",
     ),
     target: str = typer.Option(
         "sql",

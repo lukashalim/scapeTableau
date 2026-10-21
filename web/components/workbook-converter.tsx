@@ -50,6 +50,16 @@ const Editor = dynamic(() => import("@monaco-editor/react"), {
 
 type UiState = "empty" | "loading" | "error" | "success";
 type FieldFilter = "all" | "active" | "hidden";
+type SqlDialect = "ansi" | "snowflake" | "postgres" | "duckdb" | "bigquery" | "tsql";
+
+const SQL_DIALECTS: { value: SqlDialect; label: string }[] = [
+  { value: "ansi", label: "ANSI" },
+  { value: "snowflake", label: "Snowflake" },
+  { value: "bigquery", label: "BigQuery" },
+  { value: "tsql", label: "SQL Server" },
+  { value: "postgres", label: "Postgres" },
+  { value: "duckdb", label: "DuckDB" },
+];
 
 function statusVariant(status: CalculatedField["status"]): "default" | "secondary" | "destructive" | "outline" {
   if (status === "ok") return "default";
@@ -378,6 +388,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedDax, setCopiedDax] = useState(false);
+  const [dialect, setDialect] = useState<SqlDialect>("ansi");
 
   const filtered = useMemo(() => {
     if (!result) return [];
@@ -391,7 +402,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     );
   }, [query, result]);
 
-  const runFile = useCallback(async (file: File) => {
+  const runFile = useCallback(async (file: File, nextDialect: SqlDialect = dialect) => {
     setState("loading");
     setError(null);
     setFileName(file.name);
@@ -400,6 +411,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     setHeldFile(file);
     const body = new FormData();
     body.append("file", file, file.name);
+    body.append("dialect", nextDialect);
     try {
       const response = await fetch("/api/transpile", { method: "POST", body });
       const data: unknown = await response.json();
@@ -418,7 +430,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
       setError(err instanceof Error ? err.message : "Network error.");
       setState("error");
     }
-  }, []);
+  }, [dialect]);
 
   const onFiles = useCallback(
     (files: FileList | null) => {
@@ -667,7 +679,25 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="sql" className="mt-3 space-y-2">
-                  <div className="flex flex-wrap justify-end gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      Dialect
+                      <select
+                        className="rounded-md border bg-background px-2 py-1 text-foreground"
+                        value={dialect}
+                        onChange={(e) => {
+                          const next = e.target.value as SqlDialect;
+                          setDialect(next);
+                          if (heldFile) void runFile(heldFile, next);
+                        }}
+                      >
+                        {SQL_DIALECTS.map((d) => (
+                          <option key={d.value} value={d.value}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <Button size="sm" onClick={() => void downloadPbip()}>
                       <Download data-icon="inline-start" />
                       Download .pbip

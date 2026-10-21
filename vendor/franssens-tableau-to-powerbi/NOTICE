@@ -1,0 +1,28 @@
+# NOTICE — Franssens tableau-to-powerbi-migration (vendored excerpts)
+
+This directory contains a **sparse** copy of MIT-licensed templates and documentation
+excerpted from:
+
+  https://github.com/guustfranssens/tableau-to-powerbi-migration
+
+Copyright (c) 2026 Guust Franssens  
+License: MIT (see `./LICENSE`)
+
+## What we vendored
+
+| Path | Purpose |
+| --- | --- |
+| `templates/semantic/` | PBIP/TMDL patterns (compat 1702, pbism 4.2, what-if GENERATESERIES) |
+| `templates/report/` | PBIR `definition/` layout (version.json, pages/, report.json) |
+| `templates/visuals/` | Selected `.github/pbi.kb` visualContainer JSON + a simple `tableEx` |
+| `docs/tableau-dax-translation-guide.md` | DAX gotchas (compact-filter VAR hoist, LOD, parameters) |
+
+## What we did **not** take
+
+- Copilot CLI / agent orchestration
+- Full example extracts, credentials, or migration-spec machinery
+- Runtime dependency on the upstream Python package
+
+BIEscape keeps its own AST parser (`engine/parser.py`) and formula transpiler
+(`engine/transpiler.py`). Vendored files are **pattern templates** filled by
+`engine/pbip/`.

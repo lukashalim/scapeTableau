@@ -1,0 +1,8 @@
+# NOTICE — microsoft/json-schemas (vendored Fabric / PBIP schemas)
+
+Sparse copy of JSON Schema files from:
+
+  https://github.com/microsoft/json-schemas
+
+Used only to validate generated PBIP/PBIR JSON in pytest (CI). Not shipped to
+Vercel serverless runtimes or the Electron desktop app.

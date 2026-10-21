@@ -26,7 +26,7 @@ from engine.schema import ParseStatus, WorkbookParseError
 
 CONVERT_ALLOWED = {".hyper", ".twbx", ".tdsx", ".twb"}
 TRANSPILE_ALLOWED = {".twb", ".twbx", ".tdsx", ".hyper"}
-DIALECTS = ("ansi", "snowflake", "postgres", "duckdb", "tsql")
+DIALECTS = ("ansi", "snowflake", "postgres", "duckdb", "bigquery", "tsql")
 
 
 def _emit(payload: dict) -> None:

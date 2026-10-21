@@ -627,6 +627,7 @@ def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
         cols: list[str] = []
         dimensions: list[str] = []
         used: list[str] = []
+        mark_class: str | None = None
 
         def _add_used(field_name: str, is_dim: bool) -> None:
             if not field_name or is_mn_mv_token(field_name):
@@ -640,6 +641,8 @@ def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
             tag = _local_tag(child.tag)
             if tag == "datasource" and ds_name is None:
                 ds_name = child.get("name") or ds_name
+            if tag == "mark" and mark_class is None:
+                mark_class = child.get("class") or child.get("mark") or mark_class
             if tag in {"rows", "cols"}:
                 bits = _fields_from_shelf_text(_text_content(child))
                 target = rows if tag == "rows" else cols
@@ -667,6 +670,7 @@ def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
                     cols=cols,
                     dimensions=dimensions,
                     used_fields=used,
+                    mark_class=mark_class,
                 )
             )
         )

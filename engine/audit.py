@@ -23,6 +23,7 @@ from engine.schema import (
     ParameterInfo,
     ParseStatus,
     TranspileResult,
+    WorksheetInfo,
 )
 
 _CONSTANT_CASE_RE = re.compile(
@@ -504,20 +505,33 @@ def assemble_result(
     measure_names: list[MeasureNamesUsage] | None = None,
     workbook_fields: list[ColumnField] | None = None,
     joins: list[JoinInfo] | None = None,
+    worksheets: list[WorksheetInfo] | None = None,
 ) -> TranspileResult:
     usages = list(measure_names or [])
+    emit_dialect = dialect
+    # BigQuery has minimal native emitters — generate DuckDB SQL then sqlglot→bigquery.
+    if (dialect or "").lower() == "bigquery":
+        emit_dialect = "duckdb"
+    sql_script = build_sql_script(
+        fields,
+        datasources,
+        workbook_name=workbook_name,
+        dialect=emit_dialect,
+        script_style=script_style,
+        parameters=parameters,
+        measure_names=usages,
+    )
+    if (dialect or "").lower() == "bigquery":
+        try:
+            from engine.sqlglot_util import apply_sqlglot_dialect
+
+            sql_script = apply_sqlglot_dialect(sql_script, "bigquery")
+        except Exception:
+            pass
     return TranspileResult(
         calculated_fields=fields,
         datasources=datasources,
-        sql_script=build_sql_script(
-            fields,
-            datasources,
-            workbook_name=workbook_name,
-            dialect=dialect,
-            script_style=script_style,
-            parameters=parameters,
-            measure_names=usages,
-        ),
+        sql_script=sql_script,
         markdown_audit=build_markdown_audit(
             fields, datasources, measure_names=usages
         ),
@@ -537,4 +551,5 @@ def assemble_result(
         measure_names=usages,
         conversion_summary=build_conversion_summary(usages),
         joins=list(joins or []),
+        worksheets=list(worksheets or []),
     )

@@ -146,6 +146,42 @@ def _fields_for_ds(result: TranspileResult, ds: DatasourceInfo) -> list[Calculat
     return [f for f in result.calculated_fields if f.datasource in keys]
 
 
+_MISSING_COL = re.compile(r"Missing column '([^']+)'")
+
+
+def _heal_missing_column_dax(
+    field: CalculatedField,
+    *,
+    table_name: str,
+    column_names: set[str],
+) -> None:
+    """When Data/ CSV materialization discovers columns, rewrite SUM(BLANK()) heals."""
+
+    notes = list(getattr(field, "dax_notes", None) or [])
+    if not notes:
+        return
+    dax = (field.dax or "").strip()
+    remaining: list[str] = []
+    healed_col: str | None = None
+    for note in notes:
+        match = _MISSING_COL.search(note)
+        if match and match.group(1) in column_names:
+            healed_col = match.group(1)
+            continue
+        remaining.append(note)
+    if healed_col and dax in {"SUM(BLANK())", "BLANK()"}:
+        safe_table = table_name.replace("'", "''")
+        safe_col = healed_col.replace("'", "''")
+        field.dax = (
+            f"SUM('{safe_table}'[{safe_col}])"
+            if dax.startswith("SUM")
+            else f"'{safe_table}'[{safe_col}]"
+        )
+        field.dax_notes = remaining
+        if field.dax_status != ParseStatus.ok:
+            field.dax_status = ParseStatus.ok
+
+
 def _measure_eligible(field: CalculatedField) -> bool:
     if field.dax_status not in (None, ParseStatus.ok):
         return False
@@ -468,7 +504,9 @@ def build_pbip_files(
         if ds.caption:
             table_name_by_ds[ds.caption] = table_name
 
-    data_csvs, data_notes = collect_data_csvs(source, result, table_names=table_name_by_ds)
+    data_csvs, data_notes, csv_headers_by_table = collect_data_csvs(
+        source, result, table_names=table_name_by_ds
+    )
     for path, blob in data_csvs.items():
         files[path] = blob
     for note in data_notes:
@@ -482,6 +520,13 @@ def build_pbip_files(
             continue
         table_name = table_name_by_ds[ds.name]
         cols = _source_columns(ds)
+        # Custom SQL / empty metadata: adopt columns discovered while writing Data/*.csv
+        if not cols:
+            for header in csv_headers_by_table.get(table_name) or []:
+                if header and header != "Column1":
+                    # Infer simple types from demo/Orders-style names
+                    dt = "real" if header.lower() in {"sales", "profit", "quantity", "discount"} else "string"
+                    cols.append((header, dt, None))
         col_types = [(c, tableau_type_to_m(dt)) for c, dt, _ in cols]
         csv_name = safe_csv_filename(table_name)
         plan = plan_m_partition(
@@ -489,6 +534,7 @@ def build_pbip_files(
             table_name=table_name,
             column_types=col_types,
             csv_filename=csv_name,
+            prefer_csv=True,
         )
         all_params.extend(plan.parameters)
         for note in plan.notes:
@@ -499,7 +545,9 @@ def build_pbip_files(
 
         column_tmdl = "\n\n".join(_column_block(c, dt, role) for c, dt, role in cols)
         calc_blocks: list[str] = []
+        col_name_set = {c for c, _, _ in cols}
         for field in _fields_for_ds(result, ds):
+            _heal_missing_column_dax(field, table_name=table_name, column_names=col_name_set)
             disp, reason = disposition_for_field(field)
             kind = field.dax_kind or "calculated_column"
             polished = polish_dax(field.dax or "")

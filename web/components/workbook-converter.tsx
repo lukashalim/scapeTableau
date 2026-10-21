@@ -450,14 +450,17 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
   const trySample = useCallback(async () => {
     setState("loading");
     setError(null);
-    setFileName("superstore_calcs.twb");
+    // Prefer .twbx so Data/Orders.csv ships into the PBIP DataFolder (Desktop open).
+    setFileName("superstore_calcs.twbx");
     try {
-      const response = await fetch("/samples/superstore_calcs.twb");
+      const response = await fetch("/samples/superstore_calcs.twbx");
       if (!response.ok) {
         throw new Error("Sample workbook is missing from the web public folder.");
       }
       const blob = await response.blob();
-      const file = new File([blob], "superstore_calcs.twb", { type: "application/xml" });
+      const file = new File([blob], "superstore_calcs.twbx", {
+        type: "application/octet-stream",
+      });
       await runFile(file);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load the sample workbook.");

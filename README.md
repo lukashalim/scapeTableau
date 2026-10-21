@@ -169,7 +169,7 @@ npm run dev
 Open http://localhost:4317 in the browser.
 
 - Drag-and-drop target for `.twb` and `.twbx` files.
-- "Try with Sample Workbook" button (inspect + layout; the sample `.twb` has no packaged CSV — use `samples/superstore_calcs.twbx` to exercise Excel extract).
+- "Try with Sample Workbook" button loads `samples/superstore_calcs.twbx` (includes `Data/Orders.csv` so the PBIP DataFolder refreshes in Desktop without Postgres).
 - Workspace tabs after a successful upload:
   - **Transpile to SQL/dbt** — SQL / DAX / Audit / Markdown
   - **Extract Data** — archive inventory, custom SQL, Hyper index, Download `.xlsx`

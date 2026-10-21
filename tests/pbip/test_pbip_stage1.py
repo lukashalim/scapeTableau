@@ -67,29 +67,37 @@ def test_csv_twb_pbip_shape() -> None:
 
     model = _read(zip_bytes, f"{sm}/definition/model.tmdl")
     assert "ref table" in model
-    # CSV File.Contents partition
+    # CSV File.Contents partition (Custom SQL / Postgres also use DataFolder CSVs)
     tables = [n for n in names if "/tables/" in n and n.endswith(".tmdl")]
     blob = "\n".join(_read(zip_bytes, n) for n in tables)
     assert "File.Contents" in blob or "Csv.Document" in blob
-    assert "PostgreSQL.Database" in blob or "Value.NativeQuery" in blob
+    assert "DataFolder &" in blob
+    assert "PostgreSQL.Database" not in blob
     assert "CONVERSION_REPORT.md" in names
     report_md = _read(zip_bytes, "CONVERSION_REPORT.md")
     assert "converted" in report_md.lower()
     assert result.calculated_fields
 
 
-def test_postgres_live_connection_fixture() -> None:
+def test_postgres_custom_sql_uses_datafolder_csv() -> None:
+    """Desktop-open PBIP must not prompt for Postgres on West Custom SQL."""
     result = transpile(SAMPLES / "superstore_calcs.twb")
     west = next(ds for ds in result.datasources if (ds.caption or "") == "West Custom SQL")
     assert any((c.class_name or "").lower() == "postgres" for c in west.connections)
     assert any(r.custom_sql for r in west.relations)
-    zip_bytes = build_pbip_zip(result)
+    zip_bytes = build_pbip_zip(result, source=SAMPLES / "superstore_calcs.twb")
+    names = _zip_names(zip_bytes)
     blob = b"".join(
         zipfile.ZipFile(BytesIO(zip_bytes)).read(n)
-        for n in _zip_names(zip_bytes)
+        for n in names
         if n.endswith(".tmdl")
     ).decode("utf-8", errors="replace")
-    assert "PostgreSQL.Database" in blob or "NativeQuery" in blob
+    assert "PostgreSQL.Database" not in blob
+    assert "DataFolder &" in blob
+    west_csv = next(n for n in names if n.endswith("West Custom SQL.csv"))
+    west_body = zipfile.ZipFile(BytesIO(zip_bytes)).read(west_csv).decode("utf-8-sig")
+    assert "West" in west_body
+    assert "Profit" in west_body.splitlines()[0] or "Sales" in west_body.splitlines()[0]
 
 
 def test_join_fixture_relationships() -> None:

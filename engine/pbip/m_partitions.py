@@ -79,13 +79,39 @@ in
     Typed"""
 
 
+def _csv_plan(
+    *,
+    table_name: str,
+    csv_name: str,
+    transforms: str,
+    kind: str,
+    note: str,
+) -> MPartitionPlan:
+    filename = Path(csv_name).name
+    return MPartitionPlan(
+        kind,
+        _csv_from_datafolder(filename, transforms),
+        [],
+        [note],
+    )
+
+
 def plan_m_partition(
     ds: DatasourceInfo,
     *,
     table_name: str,
     column_types: list[tuple[str, str]],
     csv_filename: str | None = None,
+    prefer_csv: bool = True,
 ) -> MPartitionPlan:
+    """Plan an M partition for a Tableau datasource.
+
+    ``prefer_csv=True`` (default) routes file, Hyper, Custom SQL, and live
+    Postgres/SQL Server tables through ``DataFolder\\\\<table>.csv`` so the
+    downloaded PBIP opens in Desktop without credential prompts. Pass
+    ``prefer_csv=False`` to emit live DB connectors instead.
+    """
+
     conn = _primary_connection(ds)
     rel = _primary_relation(ds)
     notes: list[str] = []
@@ -93,6 +119,56 @@ def plan_m_partition(
     cls = ((conn.class_name if conn else None) or "").lower()
     transforms = _type_transforms(column_types)
     csv_name = csv_filename or f"{table_name}.csv"
+
+    # Desktop-open path: always bind to the Data/ CSV we emit beside the .pbip.
+    if prefer_csv and (
+        (rel and rel.custom_sql)
+        or cls in {"postgres", "postgresql", "sqlserver", "sqlproxy", "hyper"}
+        or (
+            cls in {"textscan", "text", "csv", "excel-direct"}
+            or (conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv")))
+        )
+        or (conn and conn.dbname and str(conn.dbname).lower().endswith(".hyper"))
+        or column_types
+    ):
+        filename = Path(csv_name).name
+        if rel and rel.custom_sql:
+            note = (
+                f"Custom SQL for '{table_name}' materialized to DataFolder\\\\{filename} "
+                "(live DB skipped so Desktop opens without credentials)."
+            )
+            kind = "csv"
+        elif cls in {"postgres", "postgresql", "sqlserver", "sqlproxy"}:
+            note = (
+                f"Live {cls} table '{table_name}' → DataFolder\\\\{filename} "
+                "(offline CSV for Desktop open)."
+            )
+            kind = "csv"
+        elif cls == "hyper" or (conn and conn.dbname and str(conn.dbname).lower().endswith(".hyper")):
+            hyper_path = (conn.dbname if conn else None) or (conn.filename if conn else None) or "extract.hyper"
+            note = (
+                f"Hyper extract '{hyper_path}' → Data/{filename} via DataFolder "
+                "(rows when Hyper conversion is available; otherwise header-only)."
+            )
+            kind = "hyper"
+        elif cls in {"textscan", "text", "csv", "excel-direct"} or (
+            conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv"))
+        ):
+            note = f"CSV partition for '{table_name}' → DataFolder\\\\{filename}"
+            kind = "csv"
+        else:
+            note = (
+                f"Unknown connection class '{cls or 'none'}' for '{table_name}' — "
+                f"using DataFolder\\\\{filename} (header stub if no extract)."
+            )
+            kind = "unknown"
+        return _csv_plan(
+            table_name=table_name,
+            csv_name=csv_name,
+            transforms=transforms,
+            kind=kind,
+            note=note,
+        )
 
     if rel and rel.custom_sql:
         server = (conn.server if conn else None) or "localhost"
@@ -128,9 +204,6 @@ in
         conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv"))
     ):
         filename = Path(csv_name).name
-        if conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv")):
-            # Prefer exported Data/<table>.csv name for consistency with zip layout
-            filename = Path(csv_name).name
         notes.append(f"CSV partition for '{table_name}' → DataFolder\\\\{filename}")
         return MPartitionPlan("csv", _csv_from_datafolder(filename, transforms), params, notes)
 

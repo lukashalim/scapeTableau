@@ -33,6 +33,8 @@ def test_datafolder_expression_and_csv_files() -> None:
     expr = _read(zip_bytes, expr_path)
     assert 'expression DataFolder = "Data"' in expr
     assert "IsParameterQueryRequired=true" in expr
+    # No live Postgres params for Desktop-open packages
+    assert "West_Custom_SQL_Server" not in expr
     data_csvs = [n for n in names if n.startswith("Data/") and n.endswith(".csv")]
     assert data_csvs, "expected Data/*.csv next to the .pbip in the zip"
     # File-based table M must concatenate DataFolder
@@ -43,6 +45,13 @@ def test_datafolder_expression_and_csv_files() -> None:
     )
     assert "DataFolder &" in table_blob
     assert "File.Contents(DataFolder" in table_blob
+    assert "PostgreSQL.Database" not in table_blob
+    # Sample + West CSVs should have data rows (not header-only)
+    sample = _read(zip_bytes, next(n for n in data_csvs if "Sample" in n))
+    west = _read(zip_bytes, next(n for n in data_csvs if "West" in n))
+    assert sample.count("\n") >= 2, sample[:200]
+    assert "West" in west
+    assert west.count("\n") >= 2, west[:200]
 
 
 def test_each_page_has_data_bound_visual() -> None:

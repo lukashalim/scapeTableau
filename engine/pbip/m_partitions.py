@@ -84,16 +84,31 @@ def m_text_literal(text: str) -> str:
     return f'"{escaped}"'
 
 
+def _typed_csv_query(source_expr: str, transforms: str) -> str:
+    """Promote headers, turn blank cells into null, then apply column types.
+
+    A blank Discount/Quantity cell typed as a number is an error and can leave
+    the whole table empty, so every measure on the visual stays blank.
+    """
+
+    return f"""let
+    Source = {source_expr},
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    #"Replaced Blanks" = Table.ReplaceValue(#"Promoted Headers", "", null, Replacer.ReplaceValue, Table.ColumnNames(#"Promoted Headers")),
+    Typed = if {transforms} = null then #"Replaced Blanks" else Table.TransformColumnTypes(#"Replaced Blanks", {transforms})
+in
+    Typed"""
+
+
 def _csv_inline(csv_text: str, transforms: str) -> str:
     """M that loads CSV text embedded in the partition (no file path, no credentials)."""
 
     literal = m_text_literal(csv_text)
-    return f"""let
-    Source = Csv.Document(Text.ToBinary({literal}, 65001), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
-    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
-    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
-in
-    Typed"""
+    source = (
+        f"Csv.Document(Text.ToBinary({literal}, 65001), "
+        f'[Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv])'
+    )
+    return _typed_csv_query(source, transforms)
 
 
 def _csv_from_datafolder(filename: str, transforms: str) -> str:
@@ -101,12 +116,11 @@ def _csv_from_datafolder(filename: str, transforms: str) -> str:
 
     # Escape for M string literal inside TMDL (backslash + quotes)
     escaped = (filename or "table.csv").replace('"', '""').replace("\\", "\\\\")
-    return f"""let
-    Source = Csv.Document(File.Contents(DataFolder & "\\{escaped}"), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None]),
-    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
-    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
-in
-    Typed"""
+    source = (
+        f'Csv.Document(File.Contents(DataFolder & "\\{escaped}"), '
+        f'[Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None])'
+    )
+    return _typed_csv_query(source, transforms)
 
 
 def _bind_csv_expression(

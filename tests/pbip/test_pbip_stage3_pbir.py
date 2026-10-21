@@ -46,7 +46,14 @@ def test_overview_visual_includes_numeric_table_calcs() -> None:
     blob = "\n".join(_read(zip_bytes, n) for n in visuals)
     assert '"Property": "% of Total Total Profit"' in blob
     assert '"Property": "% of Total Total Revenue"' in blob
+    assert '"Property": "Sales"' in blob
+    assert '"Property": "Profit"' in blob
     assert '"Entity": "__Measures"' in blob
+    assert '"active": true' not in blob
+    tables = "\n".join(
+        _read(zip_bytes, n) for n in names if n.endswith(".tmdl") and "/tables/" in n
+    )
+    assert "Replaced Blanks" in tables
     sample = _read(zip_bytes, next(n for n in names if n.endswith("Sample Superstore.csv")))
     lines = [ln for ln in sample.splitlines() if ln.strip()]
     assert len(lines) >= 3

@@ -140,7 +140,6 @@ def _projection(entity: str, prop: str, *, measure: bool) -> dict:
         },
         "queryRef": f"{home}.{prop}",
         "nativeQueryRef": prop,
-        **({"active": True} if measure else {}),
     }
 
 
@@ -432,6 +431,12 @@ def build_pbir_files(
         if not dims and not measures:
             dims, measures = _any_model_fields(result)
         vtype = _choose_visual_type(ws, len(dims), len(measures))
+        # Row-level numbers the extract actually has. A table of only % of Total
+        # measures shows headers and blank cells when those columns are empty.
+        if vtype == "tableEx":
+            for extra in ("Sales", "Profit"):
+                if extra in model_columns and extra not in dims and extra not in measures:
+                    dims.append(extra)
         visual = _build_visual_json(
             visual_type=vtype,
             entity=entity,

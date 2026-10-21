@@ -101,6 +101,17 @@ def test_join_fixture_relationships() -> None:
     assert "fromCardinality: many" in rel
     assert "toCardinality: one" in rel
     assert "crossFilteringBehavior: oneDirection" in rel
+    # No leading empty line (Desktop: InvalidLineType Empty!)
+    assert not rel.startswith("\n")
+    assert "///" not in rel
+
+
+def test_empty_relationships_tmdl_is_truly_empty() -> None:
+    """Desktop rejects relationships.tmdl with comment + blank line (Empty! at line 2)."""
+    zip_bytes, _ = transpile_to_pbip(SAMPLES / "superstore_calcs.twb")
+    rel_path = next(n for n in _zip_names(zip_bytes) if n.endswith("relationships.tmdl"))
+    rel = _read(zip_bytes, rel_path)
+    assert rel == "", repr(rel)
 
 
 @pytest.mark.skipif(not SUPERSTORE.is_file(), reason="US_Superstore_10.0.twbx missing")
@@ -137,4 +148,7 @@ def test_tmdl_parse_smoke() -> None:
         text = _read(zip_bytes, name)
         # Minimal structural parse: objects present, no unresolved placeholders
         assert "${" not in text  # unresolved template placeholders
+        # relationships.tmdl may be truly empty (no joins) — Desktop requires that
+        if name.endswith("relationships.tmdl") and text == "":
+            continue
         assert _TMDL_OBJECT.search(text) or text.strip().startswith("///")

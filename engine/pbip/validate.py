@@ -161,6 +161,35 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
 
     errors.extend(check_zip_paths(sorted(names)))
 
+    # relationships.tmdl: Desktop TMDL parser rejects Empty! line types (blank lines
+    # outside the gap between relationship objects — especially a blank line 2 after
+    # a comment in an otherwise empty file).
+    for path, content in files.items():
+        if not path.endswith("relationships.tmdl"):
+            continue
+        if content == "":
+            continue
+        lines = content.splitlines()
+        if not lines:
+            continue
+        # Leading blank line is always illegal
+        if lines[0].strip() == "":
+            errors.append(f"{path}: leading empty line (Desktop InvalidLineType: Empty!)")
+        # Comment-only / blank-only files are illegal — use truly empty file instead
+        meaningful = [ln for ln in lines if ln.strip() and not ln.strip().startswith("///")]
+        if not meaningful:
+            errors.append(
+                f"{path}: must be truly empty when there are no relationships "
+                "(Desktop rejects comments/blank lines here)"
+            )
+            continue
+        # No consecutive blank lines; no trailing blank line beyond final newline
+        for i, ln in enumerate(lines):
+            if ln.strip() == "" and i + 1 < len(lines) and lines[i + 1].strip() == "":
+                errors.append(f"{path}: consecutive empty lines around line {i + 1}")
+                break
+
+
     # report.json resource packages → files exist
     report_paths = [n for n in names if n.endswith("/definition/report.json")]
     for rp in report_paths:

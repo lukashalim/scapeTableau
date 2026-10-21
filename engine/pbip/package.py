@@ -253,9 +253,15 @@ def _partition_block(table_name: str, m_expr: str) -> str:
     )
 
 
-def _relationship_blocks(joins: list[JoinInfo], table_name_by_ds: dict[str, str]) -> str:
+def _relationships_tmdl(joins: list[JoinInfo], table_name_by_ds: dict[str, str]) -> str:
+    """Serialize relationships.tmdl — Desktop rejects empty lines as InvalidLineType.
+
+    When there are no joins, emit a truly empty file (cyphou/TableauToPowerBI pattern).
+    Do not write ``///`` comments here; they leave a blank line that fails open.
+    """
+
     if not joins:
-        return "/// No Tableau joins discovered — relationships intentionally empty.\n"
+        return ""
     blocks: list[str] = []
     for i, join in enumerate(joins, start=1):
         left_table = table_name_by_ds.get(join.left_datasource) or join.left_datasource
@@ -272,6 +278,7 @@ def _relationship_blocks(joins: list[JoinInfo], table_name_by_ds: dict[str, str]
                 ]
             )
         )
+    # Single trailing newline; no leading/extra blank lines (Desktop InvalidLineType: Empty!)
     return "\n\n".join(blocks) + "\n"
 
 
@@ -531,9 +538,13 @@ def build_pbip_files(
         },
     )
     joins = list(getattr(result, "joins", None) or [])
-    files[f"{sm_folder}/definition/relationships.tmdl"] = render_template(
-        "relationships.tmdl",
-        {"RELATIONSHIP_BLOCKS": _relationship_blocks(joins, table_name_by_ds)},
+    if not joins:
+        report.notes.append(
+            "No Tableau joins discovered — relationships.tmdl left empty "
+            "(Desktop rejects comment/blank-only TMDL in that file)."
+        )
+    files[f"{sm_folder}/definition/relationships.tmdl"] = _relationships_tmdl(
+        joins, table_name_by_ds
     )
     files[f"{sm_folder}/definition/expressions.tmdl"] = render_template(
         "expressions.tmdl",

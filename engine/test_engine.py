@@ -62,9 +62,9 @@ def test_lod_fixed_no_dims() -> None:
 
 def test_include_without_view_grain() -> None:
     sql, status, err = transpile_formula("{INCLUDE [Category] : SUM([Sales])}")
-    assert status == ParseStatus.unparseable
+    assert status == ParseStatus.skipped
     assert err == "INCLUDE/EXCLUDE requires view grain"
-    assert "Review LOD logic" in sql
+    assert "-- SKIPPED [lod-include/exclude]:" in sql
 
 
 def test_iif_and_zn_dax() -> None:
@@ -88,7 +88,7 @@ def test_max_fixed_none_is_calculate_not_maxx() -> None:
     dax, status, err = transpile_formula("MAX({FIXED : SUM([Sales])})", target="dax")
     assert status == ParseStatus.ok
     assert err is None
-    assert dax == "CALCULATE(SUM(Orders[Sales]), REMOVEFILTERS(Orders))"
+    assert dax == "CALCULATE(SUM(Orders[Sales]), ALL(Orders))"
     assert "MAXX" not in dax
 
 

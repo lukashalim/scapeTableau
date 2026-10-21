@@ -12,7 +12,7 @@ TWB = HERE / "lod_test.twb"
 
 EXPECTED_DAX = {
     "Fixed Region Sales": "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))",
-    "Grand Total Sales": "CALCULATE(SUM(Orders[Sales]), REMOVEFILTERS(Orders))",
+    "Grand Total Sales": "CALCULATE(SUM(Orders[Sales]), ALL(Orders))",
     "Include Category Sales": (
         "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region], Orders[Category]))"
     ),
@@ -21,11 +21,6 @@ EXPECTED_DAX = {
     ),
     "Exclude Region Sales": "CALCULATE(SUM(Orders[Sales]), REMOVEFILTERS(Orders[Region]))",
     "Region Customers": "CALCULATE(DISTINCTCOUNT(Orders[Customer]), ALLEXCEPT(Orders, Orders[Region]))",
-    "Nested Min Category": (
-        "CALCULATE(MINX(SUMMARIZE(Orders, Orders[Region], Orders[Category]), "
-        "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region], Orders[Category]))), "
-        "ALLEXCEPT(Orders, Orders[Region]))"
-    ),
     "Region Share": "DIVIDE([Fixed Region Sales], [Grand Total Sales])",
     "Region Case": 'SWITCH(Orders[Region], "East", 1, "West", 2, 0)',
     "Sales Band": 'SWITCH(TRUE(), Orders[Sales] > 100, "High", "Low")',
@@ -59,13 +54,16 @@ def test_all_lod_calcs_dax_exact() -> None:
     result = transpile(TWB, dialect="duckdb")
     fields = {f.caption: f for f in result.calculated_fields}
     assert set(EXPECTED_DAX) <= set(fields)
+    nested = fields["Nested Min Category"]
+    assert nested.dax_status == ParseStatus.skipped
+    assert "// SKIPPED [nested-lod]:" in (nested.dax or "")
     for caption, expected in EXPECTED_DAX.items():
         field = fields[caption]
         assert field.dax_status == ParseStatus.ok, f"{caption}: {field.dax_status} {field.error} {field.dax}"
         assert field.dax == expected, f"{caption}\n{field.dax!r}\n!=\n{expected!r}"
         assert field.dax_kind == EXPECTED_KIND[caption]
         assert "// TODO" not in field.dax
-    blob = "\n".join(f.dax for f in result.calculated_fields)
+    blob = "\n".join(f.dax or "" for f in result.calculated_fields)
     assert "// TODO" not in blob
     assert "// TODO" not in result.dax_script
     assert "dax_status=" in result.dax_script

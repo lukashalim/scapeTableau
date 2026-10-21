@@ -1,7 +1,7 @@
 """Extract table CSVs into the PBIP ``Data/`` folder (sibling of the .pbip).
 
-M partitions bind via ``File.Contents(DataFolder & "\\file.csv")``; the user sets
-``DataFolder`` to the absolute path of this folder after unzipping.
+Small CSVs are also embedded in the M partition so Desktop can load rows
+without a DataFolder path. Larger extracts stay as ``File.Contents(DataFolder & "\\file.csv")``.
 """
 
 from __future__ import annotations
@@ -451,10 +451,4 @@ def collect_data_csvs(
             f"'{table_name}'). Point DataFolder at this Data directory after unzip."
         )
 
-    if out:
-        notes.append(
-            "Set the semantic-model **DataFolder** parameter to the absolute path of the "
-            "`Data` folder next to the `.pbip` (written into this zip). "
-            "M partitions load `DataFolder & \"\\\\<table>.csv\"`."
-        )
     return out, notes, headers_by_table

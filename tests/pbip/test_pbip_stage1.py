@@ -12,8 +12,9 @@ import pytest
 
 from engine import transpile
 from engine.pbip import build_pbip_zip, transpile_to_pbip
+from engine.pbip.m_partitions import plan_m_partition
 from engine.pbip.render import load_template
-from engine.schema import ParseStatus
+from engine.schema import ConnectionInfo, DatasourceInfo, ParseStatus
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "pbip"
@@ -67,12 +68,13 @@ def test_csv_twb_pbip_shape() -> None:
 
     model = _read(zip_bytes, f"{sm}/definition/model.tmdl")
     assert "ref table" in model
-    # CSV File.Contents partition (Custom SQL / Postgres also use DataFolder CSVs)
+    # Small CSVs are embedded in M (Custom SQL / Postgres must not stay live)
     tables = [n for n in names if "/tables/" in n and n.endswith(".tmdl")]
     blob = "\n".join(_read(zip_bytes, n) for n in tables)
-    assert "File.Contents" in blob or "Csv.Document" in blob
-    assert "DataFolder &" in blob
+    assert "Text.ToBinary" in blob
+    assert "Csv.Document" in blob
     assert "PostgreSQL.Database" not in blob
+    assert "DataFolder" not in blob
     assert "CONVERSION_REPORT.md" in names
     report_md = _read(zip_bytes, "CONVERSION_REPORT.md")
     assert "converted" in report_md.lower()
@@ -93,11 +95,49 @@ def test_postgres_custom_sql_uses_datafolder_csv() -> None:
         if n.endswith(".tmdl")
     ).decode("utf-8", errors="replace")
     assert "PostgreSQL.Database" not in blob
-    assert "DataFolder &" in blob
+    assert "Text.ToBinary" in blob
+    assert "West,100,20" in blob
     west_csv = next(n for n in names if n.endswith("West Custom SQL.csv"))
     west_body = zipfile.ZipFile(BytesIO(zip_bytes)).read(west_csv).decode("utf-8-sig")
     assert "West" in west_body
     assert "Profit" in west_body.splitlines()[0] or "Sales" in west_body.splitlines()[0]
+
+
+def _orders_ds() -> DatasourceInfo:
+    return DatasourceInfo(
+        name="Orders",
+        caption="Orders",
+        connections=[ConnectionInfo(class_name="textscan", filename="Orders.csv")],
+    )
+
+
+def test_small_csv_is_embedded_not_postgres() -> None:
+    plan = plan_m_partition(
+        _orders_ds(),
+        table_name="Orders",
+        column_types=[("Region", "type text"), ("Sales", "type number")],
+        csv_filename="Orders.csv",
+        csv_text='Region,Sales\nWest,"1,000"\n',
+    )
+    assert "Text.ToBinary" in plan.expression
+    assert "PostgreSQL.Database" not in plan.expression
+    assert "DataFolder" not in plan.expression
+    assert 'West,""1,000""' in plan.expression
+    assert plan.parameters == []
+
+
+def test_large_csv_uses_datafolder() -> None:
+    plan = plan_m_partition(
+        _orders_ds(),
+        table_name="Orders",
+        column_types=[("Region", "type text")],
+        csv_filename="Orders.csv",
+        csv_text="Region\n" + ("West\n" * 40),
+        inline_max_chars=20,
+    )
+    assert "DataFolder" in plan.expression
+    assert "Text.ToBinary" not in plan.expression
+    assert "PostgreSQL.Database" not in plan.expression
 
 
 def test_join_fixture_relationships() -> None:

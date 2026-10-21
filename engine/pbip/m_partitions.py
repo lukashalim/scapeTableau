@@ -66,6 +66,36 @@ def tableau_type_to_m(datatype: str | None) -> str:
     return "type text"
 
 
+# Small extracts are embedded in the M partition. A relative DataFolder path does
+# not resolve when Desktop opens a downloaded .pbip, so File.Contents("Data\\…")
+# leaves every visual empty until someone sets an absolute path and refreshes.
+INLINE_CSV_MAX_CHARS = 200_000
+
+
+def m_text_literal(text: str) -> str:
+    """M text literal. ``#`` and quotes are escaped; newlines become ``#(lf)``."""
+
+    escaped = text.replace("#", "#(hash)").replace('"', '""')
+    escaped = (
+        escaped.replace("\r\n", "#(cr)#(lf)")
+        .replace("\n", "#(lf)")
+        .replace("\r", "#(cr)")
+    )
+    return f'"{escaped}"'
+
+
+def _csv_inline(csv_text: str, transforms: str) -> str:
+    """M that loads CSV text embedded in the partition (no file path, no credentials)."""
+
+    literal = m_text_literal(csv_text)
+    return f"""let
+    Source = Csv.Document(Text.ToBinary({literal}, 65001), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]),
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
+in
+    Typed"""
+
+
 def _csv_from_datafolder(filename: str, transforms: str) -> str:
     """M that loads a CSV under the shared DataFolder parameter."""
 
@@ -79,6 +109,21 @@ in
     Typed"""
 
 
+def _bind_csv_expression(
+    filename: str,
+    transforms: str,
+    csv_text: str | None,
+    *,
+    inline_max_chars: int,
+) -> tuple[str, bool]:
+    """Return ``(m_expression, embedded)``. Embed when the CSV fits the cap."""
+
+    text = (csv_text or "").strip("\ufeff")
+    if text and len(text) <= inline_max_chars:
+        return _csv_inline(text, transforms), True
+    return _csv_from_datafolder(filename, transforms), False
+
+
 def _csv_plan(
     *,
     table_name: str,
@@ -86,13 +131,30 @@ def _csv_plan(
     transforms: str,
     kind: str,
     note: str,
+    csv_text: str | None = None,
+    inline_max_chars: int = INLINE_CSV_MAX_CHARS,
 ) -> MPartitionPlan:
     filename = Path(csv_name).name
+    expression, embedded = _bind_csv_expression(
+        filename,
+        transforms,
+        csv_text,
+        inline_max_chars=inline_max_chars,
+    )
+    if embedded:
+        rows = max(0, len([ln for ln in (csv_text or "").splitlines() if ln.strip()]) - 1)
+        notes = [
+            f"Embedded {rows} data rows for '{table_name}' in the M partition "
+            "(no Postgres login and no DataFolder path). "
+            "In Desktop, use Refresh now / Apply changes once so the visual loads."
+        ]
+    else:
+        notes = [note]
     return MPartitionPlan(
         kind,
-        _csv_from_datafolder(filename, transforms),
+        expression,
         [],
-        [note],
+        notes,
     )
 
 
@@ -103,13 +165,16 @@ def plan_m_partition(
     column_types: list[tuple[str, str]],
     csv_filename: str | None = None,
     prefer_csv: bool = True,
+    csv_text: str | None = None,
+    inline_max_chars: int = INLINE_CSV_MAX_CHARS,
 ) -> MPartitionPlan:
     """Plan an M partition for a Tableau datasource.
 
-    ``prefer_csv=True`` (default) routes file, Hyper, Custom SQL, and live
-    Postgres/SQL Server tables through ``DataFolder\\\\<table>.csv`` so the
-    downloaded PBIP opens in Desktop without credential prompts. Pass
-    ``prefer_csv=False`` to emit live DB connectors instead.
+    ``prefer_csv=True`` (default) keeps file, Hyper, Custom SQL, and live
+    Postgres/SQL Server tables off live connectors. Small CSVs are embedded in
+    the M partition so Desktop shows rows after Apply changes. Larger CSVs use
+    ``DataFolder\\\\<table>.csv``. Pass ``prefer_csv=False`` to emit live DB
+    connectors instead.
     """
 
     conn = _primary_connection(ds)
@@ -168,6 +233,8 @@ def plan_m_partition(
             transforms=transforms,
             kind=kind,
             note=note,
+            csv_text=csv_text,
+            inline_max_chars=inline_max_chars,
         )
 
     if rel and rel.custom_sql:

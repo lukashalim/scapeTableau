@@ -36,7 +36,8 @@ class ConversionReport:
             "Generated for Power BI Desktop project (`.pbip`) Stage 1 semantic model + Stage 2 DAX measures.",
             "",
             "**Manual check (Lukas):** unzip the download, open `<Name>.pbip` in Power BI Desktop, "
-            "bind CSV/DB parameters, refresh, and compare key measures (Profit Ratio, Profit per Customer, "
+            "click Refresh now / Apply changes (small tables are embedded — no Postgres login), "
+            "and compare key measures (Profit Ratio, Profit per Customer, "
             "Achieved Quota) against Tableau.",
             "",
             "## Summary",

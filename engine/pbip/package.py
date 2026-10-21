@@ -328,8 +328,13 @@ def _datafolder_expression() -> str:
     )
 
 
-def _expression_blocks(params: list[tuple[str, str, str]], workbook_params: list[ParameterInfo]) -> str:
-    chunks: list[str] = [_datafolder_expression()]
+def _expression_blocks(
+    params: list[tuple[str, str, str]],
+    workbook_params: list[ParameterInfo],
+    *,
+    include_datafolder: bool = True,
+) -> str:
+    chunks: list[str] = [_datafolder_expression()] if include_datafolder else []
     for name, _kind, expr in params:
         if name == "DataFolder":
             continue
@@ -507,6 +512,7 @@ def build_pbip_files(
     data_csvs, data_notes, csv_headers_by_table = collect_data_csvs(
         source, result, table_names=table_name_by_ds
     )
+    needs_datafolder = False
     for path, blob in data_csvs.items():
         files[path] = blob
     for note in data_notes:
@@ -529,13 +535,18 @@ def build_pbip_files(
                     cols.append((header, dt, None))
         col_types = [(c, tableau_type_to_m(dt)) for c, dt, _ in cols]
         csv_name = safe_csv_filename(table_name)
+        csv_blob = data_csvs.get(f"Data/{csv_name}")
+        csv_text = csv_blob.decode("utf-8-sig") if isinstance(csv_blob, bytes) else None
         plan = plan_m_partition(
             ds,
             table_name=table_name,
             column_types=col_types,
             csv_filename=csv_name,
             prefer_csv=True,
+            csv_text=csv_text,
         )
+        if "DataFolder" in plan.expression:
+            needs_datafolder = True
         all_params.extend(plan.parameters)
         for note in plan.notes:
             if plan.source_kind == "hyper":
@@ -628,9 +639,19 @@ def build_pbip_files(
     files[f"{sm_folder}/definition/relationships.tmdl"] = _relationships_tmdl(
         joins, table_name_by_ds
     )
+    if needs_datafolder:
+        report.notes.append(
+            "Set the semantic-model **DataFolder** parameter to the absolute path of the "
+            "`Data` folder next to the `.pbip`. Large tables were not embedded; "
+            "M partitions load `DataFolder & \"\\\\<table>.csv\"`."
+        )
     files[f"{sm_folder}/definition/expressions.tmdl"] = render_template(
         "expressions.tmdl",
-        {"EXPRESSION_BLOCKS": _expression_blocks(all_params, parameters)},
+        {
+            "EXPRESSION_BLOCKS": _expression_blocks(
+                all_params, parameters, include_datafolder=needs_datafolder
+            )
+        },
     )
     files[f"{sm_folder}/definition.pbism"] = render_json_template("definition.pbism.json", {})
     files[f"{sm_folder}/.platform"] = _platform_json(item_type="SemanticModel", display_name=name)

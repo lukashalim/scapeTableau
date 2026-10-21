@@ -1,4 +1,4 @@
-"""DataFolder CSV layout + data-bound PBIR visuals per page."""
+"""Embedded CSV partitions + data-bound PBIR visuals per page."""
 
 from __future__ import annotations
 
@@ -31,21 +31,19 @@ def test_datafolder_expression_and_csv_files() -> None:
     names = _zip_names(zip_bytes)
     expr_path = next(n for n in names if n.endswith("expressions.tmdl"))
     expr = _read(zip_bytes, expr_path)
-    assert 'expression DataFolder = "Data"' in expr
-    assert "IsParameterQueryRequired=true" in expr
-    # No live Postgres params for Desktop-open packages
+    # Sample rows are embedded, so Desktop must not require a DataFolder or Postgres login
+    assert "DataFolder" not in expr
     assert "West_Custom_SQL_Server" not in expr
     data_csvs = [n for n in names if n.startswith("Data/") and n.endswith(".csv")]
     assert data_csvs, "expected Data/*.csv next to the .pbip in the zip"
-    # File-based table M must concatenate DataFolder
     table_blob = "\n".join(
         _read(zip_bytes, n)
         for n in names
         if "/definition/tables/" in n and n.endswith(".tmdl") and "__Measures" not in n
     )
-    assert "DataFolder &" in table_blob
-    assert "File.Contents(DataFolder" in table_blob
+    assert "Text.ToBinary" in table_blob
     assert "PostgreSQL.Database" not in table_blob
+    assert "DataFolder" not in table_blob
     # Sample + West CSVs should have data rows (not header-only)
     sample = _read(zip_bytes, next(n for n in data_csvs if "Sample" in n))
     west = _read(zip_bytes, next(n for n in data_csvs if "West" in n))

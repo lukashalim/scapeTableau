@@ -500,17 +500,30 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     try {
       const body = new FormData();
       body.append("file", heldFile, heldFile.name);
+      body.append("dialect", dialect);
       const response = await fetch("/api/pbip", { method: "POST", body });
       if (!response.ok) {
-        const data: unknown = await response.json().catch(() => null);
-        const message =
-          data && typeof data === "object" && "error" in data && typeof data.error === "string"
-            ? data.error
-            : "PBIP export failed.";
-        toast.error(message);
+        const raw = await response.text();
+        let message = `PBIP export failed (HTTP ${response.status})`;
+        try {
+          const data: unknown = JSON.parse(raw);
+          if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+            message = data.error;
+          }
+        } catch {
+          const stripped = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+          if (stripped) message = stripped;
+        }
+        const truncated = message.slice(0, 280);
+        console.error("[pbip download]", response.status, truncated);
+        toast.error(truncated);
         return;
       }
       const blob = await response.blob();
+      if (blob.size < 4) {
+        toast.error("PBIP export returned an empty file.");
+        return;
+      }
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -520,9 +533,11 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
       URL.revokeObjectURL(url);
       toast.success("Downloaded Power BI project (.pbip.zip) — unzip and open the .pbip in Desktop");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "PBIP download failed.");
+      const message = err instanceof Error ? err.message : "PBIP download failed.";
+      console.error("[pbip download]", message);
+      toast.error(message.slice(0, 280));
     }
-  }, [heldFile, fileName]);
+  }, [heldFile, fileName, dialect]);
 
   const okCount = result?.calculated_fields.filter((f) => f.status === "ok").length ?? 0;
 

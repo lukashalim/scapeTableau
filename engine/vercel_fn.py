@@ -96,8 +96,10 @@ def pbip_payload(filename: str, payload: bytes, dialect: str = "ansi") -> tuple[
     except WorkbookParseError as exc:
         status, body = _json_bytes({"error": exc.message}, 400)
         return status, body, "application/json; charset=utf-8"
-    except Exception as exc:  # noqa: BLE001
-        status, body = _json_bytes({"error": str(exc)}, 400)
+    except Exception as exc:  # noqa: BLE001 — surface real exception to client + logs
+        detail = f"{type(exc).__name__}: {exc}"
+        print(f"[pbip_payload] {filename}: {detail}", flush=True)
+        status, body = _json_bytes({"error": detail[:400]}, 500)
         return status, body, "application/json; charset=utf-8"
     return 200, zip_bytes, PBIP_TYPE
 

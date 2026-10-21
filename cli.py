@@ -199,11 +199,11 @@ def inspect_cmd(
 @app.command("pbip")
 def pbip_cmd(
     path: str = typer.Argument(..., metavar="PATH", help="Workbook path, or - for stdin."),
-    output: Path = typer.Option(
+    output: str = typer.Option(
         ...,
         "--output",
         "-o",
-        help="Write .pbip zip here (Power BI Desktop project folder archive).",
+        help="Write .pbip zip here, or - to stream zip bytes on stdout.",
     ),
     dialect: str = typer.Option("ansi", "--dialect", help="SQL dialect retained alongside PBIP."),
 ) -> None:
@@ -220,10 +220,20 @@ def pbip_cmd(
         typer.secho(f"PBIP export failed: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(zip_bytes)
+    if output == "-":
+        sys.stdout.buffer.write(zip_bytes)
+        typer.secho(
+            f"Wrote PBIP zip ({len(result.calculated_fields)} fields) → stdout",
+            fg=typer.colors.GREEN,
+            err=True,
+        )
+        return
+
+    out_path = Path(output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(zip_bytes)
     typer.secho(
-        f"Wrote PBIP zip ({len(result.calculated_fields)} fields) → {output}",
+        f"Wrote PBIP zip ({len(result.calculated_fields)} fields) → {out_path}",
         fg=typer.colors.GREEN,
         err=True,
     )

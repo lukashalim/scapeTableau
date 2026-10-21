@@ -60,14 +60,26 @@ def _param_index(params: list[ParameterInfo]) -> dict[str, ParameterInfo]:
 def _source_tables(workbook, datasource_name: str) -> tuple[str, str]:
     """Return (sql_table, dax_table). DAX uses the relation name when present."""
 
+    from engine.audit import _hyper_file_stem, _is_generic_extract_table
+    from engine.transpiler import split_tableau_ident
+
     for ds in workbook.datasources:
         if ds.name == datasource_name or (ds.caption or "") == datasource_name:
             for rel in ds.relations:
-                sql_table = normalize_table_name(rel.table) or normalize_table_name(rel.name)
-                dax_table = normalize_table_name(rel.name) or sql_table
+                parts = split_tableau_ident(rel.table or rel.name)
+                dax_table = normalize_table_name(rel.name) or (parts[-1] if parts else "")
+                if parts and _is_generic_extract_table(parts):
+                    sql_table = (
+                        (ds.caption or "").strip()
+                        or _hyper_file_stem(ds)
+                        or (rel.name or "").strip()
+                        or parts[-1]
+                    )
+                else:
+                    sql_table = ".".join(parts) if parts else normalize_table_name(rel.name)
                 if sql_table or dax_table:
-                    return sql_table or "Orders", dax_table or "Orders"
-            caption = normalize_table_name(ds.caption) or normalize_table_name(ds.name) or "Orders"
+                    return sql_table or "Orders", dax_table or sql_table or "Orders"
+            caption = (ds.caption or "").strip() or normalize_table_name(ds.name) or "Orders"
             return caption, caption
     return "Orders", "Orders"
 

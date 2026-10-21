@@ -19,6 +19,7 @@ KEYWORDS = {
     "NOT",
     "TRUE",
     "FALSE",
+    "NULL",
     "CASE",
     "WHEN",
 }
@@ -90,7 +91,9 @@ TABLE_CALC_PREFIXES = (
 )
 LOD_KINDS = {"FIXED", "INCLUDE", "EXCLUDE"}
 ILIKE_DIALECTS = {"snowflake", "postgres", "duckdb"}
-SQL_DIALECTS = {"ansi", "snowflake", "postgres", "duckdb", "bigquery"}
+SQL_DIALECTS = {"ansi", "snowflake", "postgres", "duckdb", "bigquery", "tsql"}
+_BOOL_CMP_OPS = {"=", "<>", "!=", "<", ">", "<=", ">="}
+_BOOL_LOGIC_OPS = {"AND", "OR"}
 
 Node = Union[
     "Literal",
@@ -214,8 +217,48 @@ class IncludeExcludeGrainError(Exception):
 
 def quote_ident(name: str, dialect: str = "ansi") -> str:
     cleaned = name.strip()
+    dialect_l = dialect.lower()
+    if dialect_l == "tsql":
+        escaped = cleaned.replace("]", "]]")
+        return f"[{escaped}]"
     escaped = cleaned.replace('"', '""')
     return f'"{escaped}"'
+
+
+def split_tableau_ident(raw: str | None) -> list[str]:
+    """Split Tableau ``[Schema].[Table]`` (or bare names) into unbracketed parts."""
+
+    if not raw:
+        return []
+    text = raw.strip()
+    if not text:
+        return []
+    # Multi-part: [Extract].[Extract] or Extract].[Extract after bad strip
+    if "].[" in text:
+        chunks = text.split("].[")
+        parts: list[str] = []
+        for chunk in chunks:
+            part = chunk.strip().lstrip("[").rstrip("]")
+            if part.endswith("$"):
+                part = part[:-1]
+            if part:
+                parts.append(part)
+        return parts
+    part = text
+    if part.startswith("[") and part.endswith("]"):
+        part = part[1:-1]
+    if part.endswith("$"):
+        part = part[:-1]
+    return [part] if part else []
+
+
+def quote_table_ref(raw: str | None, dialect: str = "ansi") -> str:
+    """Quote a Tableau table reference part-by-part: ``[A].[B]`` → ``"A"."B"``."""
+
+    parts = split_tableau_ident(raw)
+    if not parts:
+        return quote_ident("Orders", dialect)
+    return ".".join(quote_ident(part, dialect) for part in parts)
 
 
 def sql_string(value: str) -> str:
@@ -226,6 +269,25 @@ def dax_string(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
+def normalize_number_literal(text: str) -> str:
+    """Collapse float noise: ``18.400000000000002`` → ``18.4``."""
+
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    try:
+        as_float = float(raw)
+    except ValueError:
+        return raw
+    if as_float != as_float or as_float in {float("inf"), float("-inf")}:  # NaN / Inf
+        return raw
+    # Shortest round-trip that removes binary float noise written as long decimals.
+    formatted = format(as_float, ".16g")
+    if formatted.lower() in {"nan", "inf", "-inf"}:
+        return raw
+    return formatted
+
+
 def like_op(dialect: str) -> str:
     if dialect.lower() in ILIKE_DIALECTS:
         return "ILIKE"
@@ -233,14 +295,36 @@ def like_op(dialect: str) -> str:
 
 
 def normalize_table_name(raw: str | None) -> str:
-    if not raw:
+    """Return a single unquoted table label (last part of a multi-part ref)."""
+
+    parts = split_tableau_ident(raw)
+    if not parts:
         return ""
-    table = raw.strip()
-    if table.startswith("[") and table.endswith("]"):
-        table = table[1:-1]
-    if table.endswith("$"):
-        table = table[:-1]
-    return table
+    return parts[-1]
+
+
+def is_bool_sql_node(node: Node) -> bool:
+    if isinstance(node, Literal) and node.kind == "bool":
+        return True
+    if isinstance(node, UnaryOp) and node.op == "NOT":
+        return True
+    if isinstance(node, BinaryOp):
+        op = node.op.upper()
+        if op in _BOOL_CMP_OPS or op in _BOOL_LOGIC_OPS:
+            return True
+    if isinstance(node, Call) and node.name.upper() in {"ISNULL", "CONTAINS", "STARTSWITH", "ENDSWITH"}:
+        return True
+    if isinstance(node, Paren):
+        return is_bool_sql_node(node.expr)
+    return False
+
+
+def wrap_bool_sql(sql: str, dialect: str) -> str:
+    """Emit dialect-safe boolean column/expression (T-SQL has no bare BOOLEAN)."""
+
+    if dialect.lower() != "tsql":
+        return sql
+    return f"CASE WHEN {sql} THEN 1 ELSE 0 END"
 
 
 def resolve_internal_names(formula: str, name_map: dict[str, str]) -> str:
@@ -488,14 +572,19 @@ class Parser:
         if tok.kind == "KEYWORD" and tok.value in {"TRUE", "FALSE"}:
             self.advance()
             return Literal("bool", tok.value)
+        if tok.kind == "KEYWORD" and tok.value == "NULL":
+            self.advance()
+            return Literal("null", "NULL")
         if tok.kind == "NUMBER":
-            return Literal("number", self.advance().value)
+            return Literal("number", normalize_number_literal(self.advance().value))
         if tok.kind == "STRING":
             return Literal("string", self.advance().value)
         if tok.kind == "FIELD":
             return self.parse_field()
         if tok.kind == "IDENT":
             name = self.advance().value
+            if name.upper() == "NULL":
+                return Literal("null", "NULL")
             if self.peek().kind == "LPAREN":
                 return Call(name, self.parse_args())
             return FieldRef(name)
@@ -807,15 +896,18 @@ def _param_values(info: ParameterInfo) -> tuple[str, str]:
     raw = info.value if info.value not in (None, "") else (info.formula or "NULL")
     dt = (info.datatype or "").lower()
     if dt in {"string", "str"}:
-        text = str(raw).strip("'\"")
+        text = str(raw).strip().strip('"').strip("'")
+        # Tableau stores list members with escaped \% etc.
+        text = text.replace("\\%", "%").replace('\\"', '"')
         return sql_string(text), dax_string(text)
     if dt in {"boolean", "bool"}:
         flag = str(raw).strip().lower() in {"true", "1", "yes"}
         lit = "TRUE" if flag else "FALSE"
         return lit, lit
     text = str(raw).strip().strip('"')
-    if re.fullmatch(r"-?\d+(\.\d+)?", text):
-        return text, text
+    if re.fullmatch(r"-?\d+(\.\d+)?([eE][+-]?\d+)?", text):
+        normalized = normalize_number_literal(text)
+        return normalized, normalized
     if dt in {"date", "datetime"} or (text.startswith("#") and text.endswith("#")):
         inner = text.strip("#")
         return sql_string(inner), f"DATEVALUE({dax_string(inner)})"
@@ -863,9 +955,17 @@ def _interval(part: str, amount_sql: str, dialect: str) -> str:
         if part in {"week", "wk"}:
             return f"DATEADD(day, 7 * ({amount_sql}), {{date}})"
         return f"DATEADD({snow_unit.lower()}, {amount_sql}, {{date}})"
+    if dialect == "tsql":
+        tsql_unit = "quarter" if part in {"quarter", "qq"} else unit.lower()
+        if part in {"week", "wk"}:
+            return f"DATEADD(day, 7 * ({amount_sql}), {{date}})"
+        if part in {"quarter", "qq"}:
+            return f"DATEADD(month, 3 * ({amount_sql}), {{date}})"
+        return f"DATEADD({tsql_unit}, {amount_sql}, {{date}})"
     if dialect in {"postgres", "duckdb"}:
         return f"{{date}} + ({factor}{amount_sql}) * INTERVAL '1 {unit.lower()}'"
-    return f"DATEADD('{unit.lower()}', {factor}{amount_sql}, {{date}})"
+    # ansi — interval arithmetic
+    return f"{{date}} + ({factor}{amount_sql}) * INTERVAL '1' {unit}"
 
 
 class Emitter:
@@ -889,7 +989,13 @@ class Emitter:
             if node.kind == "string":
                 return sql_string(node.value)
             if node.kind == "bool":
+                if self.dialect == "tsql":
+                    return "1" if node.value == "TRUE" else "0"
                 return "TRUE" if node.value == "TRUE" else "FALSE"
+            if node.kind == "null":
+                return "NULL"
+            if node.kind == "number":
+                return normalize_number_literal(node.value)
             return node.value
         if isinstance(node, FieldRef):
             return self._sql_field(node)
@@ -935,6 +1041,10 @@ class Emitter:
                 return dax_string(node.value)
             if node.kind == "bool":
                 return "TRUE" if node.value == "TRUE" else "FALSE"
+            if node.kind == "null":
+                return "BLANK()"
+            if node.kind == "number":
+                return normalize_number_literal(node.value)
             return node.value
         if isinstance(node, FieldRef):
             return self._dax_field(node)
@@ -1174,6 +1284,8 @@ class Emitter:
         if fn in {"YEAR", "MONTH", "DAY", "QUARTER"}:
             if len(args) != 1:
                 raise TranspileFormulaError(f"{fn} expects 1 argument")
+            if dialect == "tsql":
+                return f"DATEPART({fn.lower()}, {args[0]})"
             if dialect == "snowflake":
                 return f"{fn}({args[0]})"
             return f"EXTRACT({fn} FROM {args[0]})"
@@ -1182,6 +1294,8 @@ class Emitter:
                 raise TranspileFormulaError("DATEPART expects 2 arguments")
             part = _norm_part(node.args[0]) or "day"
             unit = part.upper()
+            if dialect == "tsql":
+                return f"DATEPART({part}, {args[1]})"
             if dialect == "snowflake":
                 return f"DATE_PART('{part}', {args[1]})"
             return f"EXTRACT({unit} FROM {args[1]})"
@@ -1189,6 +1303,8 @@ class Emitter:
             if len(args) != 2:
                 raise TranspileFormulaError("DATETRUNC expects 2 arguments")
             part = _norm_part(node.args[0]) or "day"
+            if dialect == "tsql":
+                return f"DATETRUNC({part}, {args[1]})"
             if dialect == "snowflake":
                 return f"DATE_TRUNC('{part}', {args[1]})"
             return f"DATE_TRUNC('{part}', {args[1]})"
@@ -1201,11 +1317,19 @@ class Emitter:
                 return f"DATEDIFF('{part}', {start}, {end})"
             if dialect == "duckdb":
                 return f"DATE_DIFF('{part}', {start}, {end})"
+            if dialect == "tsql":
+                return f"DATEDIFF({part}, {start}, {end})"
             if dialect == "postgres":
                 if part in {"day", "dd"}:
                     return f"({end}::date - {start}::date)"
                 return f"(EXTRACT({part.upper()} FROM {end}) - EXTRACT({part.upper()} FROM {start}))"
-            return f"DATEDIFF('{part}', {start}, {end})"
+            # ansi — portable date subtraction (no vendor DATEDIFF)
+            if part in {"day", "dd"}:
+                return f"(CAST({end} AS DATE) - CAST({start} AS DATE))"
+            return (
+                f"(EXTRACT({part.upper()} FROM CAST({end} AS TIMESTAMP)) - "
+                f"EXTRACT({part.upper()} FROM CAST({start} AS TIMESTAMP)))"
+            )
         if fn == "DATEADD":
             if len(args) != 3:
                 raise TranspileFormulaError("DATEADD expects 3 arguments")
@@ -1215,6 +1339,8 @@ class Emitter:
         if fn == "MAKEDATE":
             if len(args) != 3:
                 raise TranspileFormulaError("MAKEDATE expects 3 arguments")
+            if dialect == "tsql":
+                return f"DATEFROMPARTS({args[0]}, {args[1]}, {args[2]})"
             if dialect == "snowflake":
                 return f"DATE_FROM_PARTS({args[0]}, {args[1]}, {args[2]})"
             return f"MAKE_DATE({args[0]}, {args[1]}, {args[2]})"
@@ -1391,7 +1517,7 @@ class Emitter:
         Matches DAX ``AVERAGEX(VALUES(Customer Name), ...)`` — not Tableau row-weighted AVG.
         """
 
-        table = quote_ident(self.ctx.source_table or "Orders", self.dialect)
+        table = quote_table_ref(self.ctx.source_table or "Orders", self.dialect)
         alias = "_lod"
         kind = lod.kind.upper()
         own_dims = [self._dim_name(d) for d in lod.dims]
@@ -1522,11 +1648,11 @@ class Emitter:
         return inner
 
     def _lod_subquery(self, lod: LodExpr, grain_sql: list[str]) -> str:
-        table = quote_ident(self.ctx.source_table or "Orders", self.dialect)
+        table = quote_table_ref(self.ctx.source_table or "Orders", self.dialect)
         alias = "_lod"
         agg_sql = self._sql_call(lod.agg) if isinstance(lod.agg, Call) else self.emit_sql(lod.agg)
         if grain_sql:
-            outer = quote_ident(self.ctx.source_table or "Orders", self.dialect)
+            outer = quote_table_ref(self.ctx.source_table or "Orders", self.dialect)
             preds = " AND ".join(f"{alias}.{col} = {outer}.{col}" for col in grain_sql)
             return f"(SELECT {agg_sql} FROM {table} AS {alias} WHERE {preds})"
         return f"(SELECT {agg_sql} FROM {table} AS {alias})"
@@ -1553,6 +1679,8 @@ def transpile_tree(
     emitter = Emitter(ctx)
     try:
         text = emitter.emit(node)
+        if ctx.target == "sql" and is_bool_sql_node(node):
+            text = wrap_bool_sql(text, ctx.dialect)
         if emitter.partial:
             return (
                 text,

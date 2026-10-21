@@ -65,6 +65,10 @@ class ParameterInfo(BaseModel):
     value: str | None = None
     formula: str | None = None
     datasource: str = "Parameters"
+    domain_type: str | None = None  # list | range | any
+    allowed_values: list[str] = Field(default_factory=list)
+    range_min: str | None = None
+    range_max: str | None = None
 
 
 class DashboardZone(BaseModel):

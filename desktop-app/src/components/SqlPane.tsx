@@ -5,6 +5,7 @@ const DIALECTS: { value: SqlDialect; label: string }[] = [
   { value: "snowflake", label: "Snowflake" },
   { value: "postgres", label: "Postgres" },
   { value: "duckdb", label: "DuckDB" },
+  { value: "tsql", label: "T-SQL" },
 ];
 
 type Props = {

@@ -118,7 +118,7 @@ def process(
     dialect: str = typer.Option(
         "ansi",
         "--dialect",
-        help="ansi | snowflake | postgres | duckdb | dax",
+        help="ansi | snowflake | postgres | duckdb | tsql | dax",
     ),
     target: str = typer.Option(
         "sql",

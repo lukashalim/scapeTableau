@@ -282,14 +282,39 @@ def _parse_datasource(
         fields.append(field)
 
         if is_parameters:
+            domain_type = el.get("param-domain-type")
+            allowed: list[str] = []
+            range_min = None
+            range_max = None
+            for child in list(el):
+                tag = _local_tag(child.tag)
+                if tag == "members":
+                    for member in list(child):
+                        if _local_tag(member.tag) != "member":
+                            continue
+                        raw_val = member.get("value")
+                        if raw_val is None:
+                            continue
+                        # Tableau escapes as "\"Names\"" or '"\\% quota ascending"'
+                        text = raw_val.strip()
+                        if text.startswith('"') and text.endswith('"'):
+                            text = text[1:-1].replace('\\"', '"').replace("\\%", "%")
+                        allowed.append(text)
+                elif tag == "range":
+                    range_min = child.get("min")
+                    range_max = child.get("max")
             parameters.append(
                 ParameterInfo(
                     name=col_name or internal,
                     caption=col_caption or internal,
                     datatype=el.get("datatype"),
-                    value=el.get("value") or el.get("param-domain-type"),
+                    value=el.get("value"),
                     formula=formula,
                     datasource=name,
+                    domain_type=domain_type,
+                    allowed_values=allowed,
+                    range_min=range_min,
+                    range_max=range_max,
                 )
             )
 

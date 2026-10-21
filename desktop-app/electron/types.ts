@@ -20,4 +20,4 @@ export type ConvertStatus =
       skipped: { caption: string; status: string; error?: string | null }[];
     };
 
-export type SqlDialect = "ansi" | "snowflake" | "postgres" | "duckdb";
+export type SqlDialect = "ansi" | "snowflake" | "postgres" | "duckdb" | "tsql";

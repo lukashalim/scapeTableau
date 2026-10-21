@@ -60,16 +60,17 @@ def _unquote_tmdl_ident(raw: str) -> str:
     return text.replace("''", "'")
 
 
-def _parse_tmdl_model(files: dict[str, str]) -> ModelCatalog:
+def _parse_tmdl_model(files: dict[str, str | bytes]) -> ModelCatalog:
     cat = ModelCatalog()
     # Quoted idents may contain doubled apostrophes: 'Coût d''Achat'
     table_re = re.compile(r"^table\s+'((?:[^']|'')+)'|^table\s+(\S+)", re.M)
     col_re = re.compile(r"^\tcolumn\s+'((?:[^']|'')+)'|^\tcolumn\s+(\S+)", re.M)
     meas_re = re.compile(r"^\tmeasure\s+'((?:[^']|'')+)'|^\tmeasure\s+(\S+)", re.M)
     current: str | None = None
-    for path, text in files.items():
+    for path, raw in files.items():
         if not path.endswith(".tmdl"):
             continue
+        text = _as_text(raw)
         for line in text.splitlines():
             tm = table_re.match(line)
             if tm:
@@ -145,7 +146,13 @@ def _check_dax_refs(dax: str, catalog: ModelCatalog, where: str, errors: list[st
             errors.append(f"{where}: DAX references missing column '{table}'[{col}]")
 
 
-def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str]:
+def _as_text(content: str | bytes) -> str:
+    if isinstance(content, bytes):
+        return content.decode("utf-8", errors="replace")
+    return content
+
+
+def validate_pbip_files(files: dict[str, str | bytes], *, fail: bool = True) -> list[str]:
     """Validate generated PBIP zip contents. Return error list; raise if fail and errors."""
 
     errors: list[str] = []
@@ -167,9 +174,10 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
     for path, content in files.items():
         if not path.endswith("relationships.tmdl"):
             continue
-        if content == "":
+        text = _as_text(content)
+        if text == "":
             continue
-        lines = content.splitlines()
+        lines = text.splitlines()
         if not lines:
             continue
         # Leading blank line is always illegal
@@ -194,7 +202,7 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
     report_paths = [n for n in names if n.endswith("/definition/report.json")]
     for rp in report_paths:
         try:
-            report = json.loads(files[rp])
+            report = json.loads(_as_text(files[rp]))
         except json.JSONDecodeError as exc:
             errors.append(f"{rp}: invalid JSON ({exc})")
             continue
@@ -206,6 +214,20 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
             full = f"{prefix}/{rel}"
             if full not in names:
                 errors.append(f"{rp}: resourcePackages references missing file {full}")
+
+    # File-based tables must have a Data/*.csv when M references DataFolder
+    datafolder_ref = re.compile(r'DataFolder\s*&\s*"\\([^"]+)"')
+    for path, content in files.items():
+        if "/definition/tables/" not in path or not path.endswith(".tmdl"):
+            continue
+        text = _as_text(content)
+        if "DataFolder" not in text:
+            continue
+        for m in datafolder_ref.finditer(text):
+            csv_name = m.group(1).lstrip("\\").replace("\\", "/")
+            data_path = f"Data/{Path(csv_name).name}"
+            if data_path not in names:
+                errors.append(f"{path}: DataFolder references missing {data_path}")
 
     # JSON schema smoke for key artifacts.
     # Top-level .pbip must NOT include "$schema" — Power BI Desktop refuses to open
@@ -223,7 +245,7 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
         if path.endswith(".tmdl"):
             continue
         try:
-            instance = json.loads(content)
+            instance = json.loads(_as_text(content))
         except json.JSONDecodeError:
             continue
         if path.endswith(".pbip"):
@@ -243,18 +265,28 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
                     _validate_required(instance, schema, path, errors)
                 break
 
-    # Visual JSON required keys
+    # Visual JSON required keys + at least one data-bound projection
     for path, content in files.items():
         if not path.endswith("/visual.json"):
             continue
         try:
-            visual = json.loads(content)
+            visual = json.loads(_as_text(content))
         except json.JSONDecodeError as exc:
             errors.append(f"{path}: invalid JSON ({exc})")
             continue
         for key in ("name", "position", "visual"):
             if key not in visual:
                 errors.append(f"{path}: missing '{key}'")
+        vbody = visual.get("visual") or {}
+        if (vbody.get("visualType") or "").lower() in {"textbox", "shape", "actionbutton"}:
+            errors.append(f"{path}: textbox/shape visuals are not allowed — use data-bound charts")
+        qs = ((vbody.get("query") or {}).get("queryState")) or {}
+        projs = []
+        for role in qs.values():
+            if isinstance(role, dict):
+                projs.extend(role.get("projections") or [])
+        if not projs:
+            errors.append(f"{path}: missing data-bound field projections")
 
     catalog = _parse_tmdl_model(files)
     for path, content in files.items():
@@ -262,7 +294,7 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
         if "/definition/tables/" not in path or not path.endswith(".tmdl"):
             continue
         # Collect multi-line measure/column expressions
-        lines = content.splitlines()
+        lines = _as_text(content).splitlines()
         i = 0
         while i < len(lines):
             m = re.match(

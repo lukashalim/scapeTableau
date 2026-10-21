@@ -94,7 +94,7 @@ def pbip_payload(filename: str, payload: bytes, dialect: str = "ansi") -> tuple[
     try:
         result = transpile(payload, dialect=dialect or "ansi")
         stem = Path(filename).stem if filename else None
-        zip_bytes = build_pbip_zip(result, source_stem=stem)
+        zip_bytes = build_pbip_zip(result, source_stem=stem, source=payload)
     except WorkbookParseError as exc:
         status, body = _json_bytes({"error": exc.message}, 400)
         return status, body, "application/json; charset=utf-8"

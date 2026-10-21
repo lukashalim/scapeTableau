@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from engine.schema import ConnectionInfo, DatasourceInfo, RelationInfo
 
@@ -65,11 +66,25 @@ def tableau_type_to_m(datatype: str | None) -> str:
     return "type text"
 
 
+def _csv_from_datafolder(filename: str, transforms: str) -> str:
+    """M that loads a CSV under the shared DataFolder parameter."""
+
+    # Escape for M string literal inside TMDL (backslash + quotes)
+    escaped = (filename or "table.csv").replace('"', '""').replace("\\", "\\\\")
+    return f"""let
+    Source = Csv.Document(File.Contents(DataFolder & "\\{escaped}"), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None]),
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
+in
+    Typed"""
+
+
 def plan_m_partition(
     ds: DatasourceInfo,
     *,
     table_name: str,
     column_types: list[tuple[str, str]],
+    csv_filename: str | None = None,
 ) -> MPartitionPlan:
     conn = _primary_connection(ds)
     rel = _primary_relation(ds)
@@ -77,6 +92,7 @@ def plan_m_partition(
     params: list[tuple[str, str, str]] = []
     cls = ((conn.class_name if conn else None) or "").lower()
     transforms = _type_transforms(column_types)
+    csv_name = csv_filename or f"{table_name}.csv"
 
     if rel and rel.custom_sql:
         server = (conn.server if conn else None) or "localhost"
@@ -111,22 +127,12 @@ in
     if cls in {"textscan", "text", "csv", "excel-direct"} or (
         conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv"))
     ):
-        filename = (conn.filename if conn else None) or f"{table_name}.csv"
-        p_path = _safe_param(f"{table_name}_FilePath")
-        params.append(
-            (
-                p_path,
-                "text",
-                f'"{filename}" meta [IsParameterQuery=true, Type="Text"]',
-            )
-        )
-        expr = f"""let
-    Source = Csv.Document(File.Contents({p_path}), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None]),
-    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
-    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
-in
-    Typed"""
-        return MPartitionPlan("csv", expr, params, notes)
+        filename = Path(csv_name).name
+        if conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv")):
+            # Prefer exported Data/<table>.csv name for consistency with zip layout
+            filename = Path(csv_name).name
+        notes.append(f"CSV partition for '{table_name}' → DataFolder\\\\{filename}")
+        return MPartitionPlan("csv", _csv_from_datafolder(filename, transforms), params, notes)
 
     if cls in {"postgres", "postgresql"}:
         server = ((conn.server if conn else None) or "localhost").split(";")[0]
@@ -168,28 +174,26 @@ in
 
     if cls == "hyper" or (conn and conn.dbname and str(conn.dbname).lower().endswith(".hyper")):
         hyper_path = (conn.dbname if conn else None) or (conn.filename if conn else None) or "extract.hyper"
-        p_path = _safe_param(f"{table_name}_CsvPlaceholder")
-        params.append(
-            (
-                p_path,
-                "text",
-                f'"{table_name}.csv" meta [IsParameterQuery=true, Type="Text"]',
-            )
-        )
+        filename = Path(csv_name).name
         notes.append(
-            f"Hyper extract '{hyper_path}' is not loaded into PBIP. "
-            f"Bind parameter {p_path} to an exported CSV (or use the desktop Hyper→Excel converter)."
+            f"Hyper extract '{hyper_path}' → Data/{filename} via DataFolder "
+            "(rows when Hyper conversion is available; otherwise header-only)."
         )
-        expr = f"""let
-    // TODO: Replace Hyper extract with CSV export — original: {hyper_path}
-    Source = Csv.Document(File.Contents({p_path}), [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None]),
-    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
-    Typed = if {transforms} = null then #"Promoted Headers" else Table.TransformColumnTypes(#"Promoted Headers", {transforms})
-in
-    Typed"""
-        return MPartitionPlan("hyper", expr, params, notes)
+        return MPartitionPlan(
+            "hyper", _csv_from_datafolder(filename, transforms), params, notes
+        )
 
-    # Fallback empty table with typed columns
+    # File-ish / unknown: still prefer DataFolder CSV when we emit Data/<table>.csv
+    if column_types:
+        filename = Path(csv_name).name
+        notes.append(
+            f"Unknown connection class '{cls or 'none'}' for '{table_name}' — "
+            f"using DataFolder\\\\{filename} (header stub if no extract)."
+        )
+        return MPartitionPlan(
+            "unknown", _csv_from_datafolder(filename, transforms), params, notes
+        )
+
     notes.append(f"Unknown connection class '{cls or 'none'}' for '{table_name}' — empty typed stub.")
     col_names = ", ".join(f'"{n}"' for n, _ in column_types) or '"Column1"'
     expr = f"""let

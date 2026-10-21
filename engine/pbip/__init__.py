@@ -28,4 +28,7 @@ def transpile_to_pbip(source, *, dialect: str = "ansi") -> tuple[bytes, Transpil
     """Transpile a workbook and return (zip_bytes, result)."""
 
     result = transpile(source, dialect=dialect, target="sql")
-    return build_pbip_zip(result, source_stem=_source_stem(source)), result
+    return (
+        build_pbip_zip(result, source_stem=_source_stem(source), source=source),
+        result,
+    )

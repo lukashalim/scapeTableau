@@ -216,8 +216,9 @@ def pbip_cmd(
         if path != "-":
             zip_bytes, result = transpile_to_pbip(Path(path), dialect=dialect)
         else:
-            result = transpile(_read_source(path), dialect=dialect)
-            zip_bytes = build_pbip_zip(result, source_stem="workbook")
+            payload = _read_source(path)
+            result = transpile(payload, dialect=dialect)
+            zip_bytes = build_pbip_zip(result, source_stem="workbook", source=payload)
     except WorkbookParseError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc

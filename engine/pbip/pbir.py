@@ -124,19 +124,38 @@ def _choose_visual_type(ws: WorksheetInfo, n_dims: int, n_meas: int) -> str:
     return "tableEx"
 
 
+_MEASURES_ENTITY = "__Measures"
+
+
 def _projection(entity: str, prop: str, *, measure: bool) -> dict:
+    # Measures live on the dedicated __Measures table in our TMDL model
+    home = _MEASURES_ENTITY if measure else entity
     kind = "Measure" if measure else "Column"
     return {
         "field": {
             kind: {
-                "Expression": {"SourceRef": {"Entity": entity}},
+                "Expression": {"SourceRef": {"Entity": home}},
                 "Property": prop,
             }
         },
-        "queryRef": f"{entity}.{prop}",
+        "queryRef": f"{home}.{prop}",
         "nativeQueryRef": prop,
         **({"active": True} if measure else {}),
     }
+
+
+def visual_is_data_bound(visual: dict) -> bool:
+    """True when visual.json has at least one Column/Measure projection (not a textbox)."""
+
+    vbody = visual.get("visual") or {}
+    vtype = (vbody.get("visualType") or "").lower()
+    if vtype in {"textbox", "shape", "actionbutton", "image"}:
+        return False
+    qs = ((vbody.get("query") or {}).get("queryState")) or {}
+    for role in qs.values():
+        if isinstance(role, dict) and role.get("projections"):
+            return True
+    return False
 
 
 def _build_visual_json(
@@ -154,6 +173,7 @@ def _build_visual_json(
         "https://developer.microsoft.com/json-schemas/fabric/item/report/"
         "definition/visualContainer/2.9.0/schema.json"
     )
+    # Prefer chart types that keep real field wells; never emit textbox/title-only
     if visual_type == "card" and measures:
         query_state = {
             "Values": {"projections": [_projection(entity, measures[0], measure=True)]}
@@ -197,8 +217,28 @@ def _build_visual_json(
         # tableEx — Values holds columns + measures
         projs = [_projection(entity, d, measure=False) for d in dims[:6]]
         projs += [_projection(entity, m, measure=True) for m in measures[:6]]
+        if not projs and measures:
+            projs = [_projection(entity, measures[0], measure=True)]
+        if not projs and dims:
+            projs = [_projection(entity, dims[0], measure=False)]
         query_state = {"Values": {"projections": projs}}
         visual_type = "tableEx"
+
+    # Guard: never write an empty queryState (Desktop shows blank / title-only)
+    if not any(
+        isinstance(role, dict) and role.get("projections")
+        for role in query_state.values()
+    ):
+        if measures:
+            query_state = {
+                "Values": {"projections": [_projection(entity, measures[0], measure=True)]}
+            }
+            visual_type = "card"
+        elif dims:
+            query_state = {
+                "Values": {"projections": [_projection(entity, dims[0], measure=False)]}
+            }
+            visual_type = "tableEx"
 
     return {
         "$schema": schema,
@@ -242,6 +282,35 @@ def _entity_for_worksheet(
                 return table_name_by_ds[ds.name]
             return (ds.caption or ds.name or "Table").strip()
     return "Table"
+
+
+def _any_model_fields(result: TranspileResult) -> tuple[list[str], list[str]]:
+    """Fallback dims/measures from the whole model when a page would otherwise be empty."""
+
+    measures = sorted(
+        {
+            f.caption
+            for f in result.calculated_fields
+            if f.dax_kind == "measure" and f.dax_status == ParseStatus.ok and f.caption
+        }
+    )[:2]
+    dims: list[str] = []
+    for ds in result.datasources:
+        if (ds.name or "").lower() == "parameters":
+            continue
+        for col in ds.fields:
+            if col.calculated:
+                continue
+            cap = (col.caption or col.name or "").strip("[]")
+            if cap and not _is_internal_field(cap):
+                dims.append(cap)
+            if len(dims) >= 3:
+                break
+        if dims:
+            break
+    if not dims and not measures:
+        dims = ["Column1"]
+    return dims, measures
 
 
 def _model_fields(
@@ -311,13 +380,16 @@ def build_pbir_files(
             {"PAGE_NAME": page_name, "PAGE_DISPLAY": "Converted"},
         )
         entity = _entity_for_worksheet(WorksheetInfo(name="Converted"), result, table_name_by_ds)
-        _cols, model_measures = _model_fields(result, entity, table_name_by_ds)
-        measures = [m for m in model_measures][:2]
+        model_columns, model_measures = _model_fields(result, entity, table_name_by_ds)
+        measures = sorted(model_measures)[:2]
+        dims = sorted(model_columns)[:3]
+        if not dims and not measures:
+            dims, measures = _any_model_fields(result)
         visual = _build_visual_json(
-            visual_type="card" if measures else "tableEx",
+            visual_type="card" if measures and not dims else "tableEx",
             entity=entity,
-            dims=[],
-            measures=measures or [],
+            dims=dims,
+            measures=measures,
             x=40,
             y=40,
             z=1000,
@@ -353,10 +425,12 @@ def build_pbir_files(
             else:
                 if cap not in dims and cap not in measures:
                     dims.append(cap)
-        # If shelves empty after filtering, bind first real columns
+        # If shelves empty after filtering, bind first real columns / measures
         if not dims and not measures:
-            dims = list(model_columns)[:3]
-            measures = list(model_measures)[:2]
+            dims = sorted(model_columns)[:3]
+            measures = sorted(model_measures)[:2]
+        if not dims and not measures:
+            dims, measures = _any_model_fields(result)
         vtype = _choose_visual_type(ws, len(dims), len(measures))
         visual = _build_visual_json(
             visual_type=vtype,
@@ -367,6 +441,17 @@ def build_pbir_files(
             y=40,
             z=1000,
         )
+        if not visual_is_data_bound(visual):
+            fb_dims, fb_meas = _any_model_fields(result)
+            visual = _build_visual_json(
+                visual_type="tableEx",
+                entity=entity,
+                dims=dims[:4] or fb_dims,
+                measures=measures[:4] or fb_meas,
+                x=40,
+                y=40,
+                z=1000,
+            )
         vid = visual["name"]
         files[f"{base}/pages/{pid}/visuals/{vid}/visual.json"] = (
             json.dumps(visual, indent=2, ensure_ascii=False) + "\n"

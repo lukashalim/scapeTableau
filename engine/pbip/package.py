@@ -10,6 +10,7 @@ from io import BytesIO
 from pathlib import Path
 
 from engine.pbip.conversion import ConversionEntry, ConversionReport, disposition_for_field
+from engine.pbip.data_csv import collect_data_csvs, safe_csv_filename
 from engine.pbip.dax_polish import (
     percent_format_string,
     polish_dax,
@@ -282,9 +283,20 @@ def _relationships_tmdl(joins: list[JoinInfo], table_name_by_ds: dict[str, str])
     return "\n\n".join(blocks) + "\n"
 
 
+def _datafolder_expression() -> str:
+    """Shared folder next to the .pbip — user sets absolute path after unzip."""
+
+    return (
+        'expression DataFolder = "Data" meta '
+        '[IsParameterQuery=true, Type="Text", IsParameterQueryRequired=true]'
+    )
+
+
 def _expression_blocks(params: list[tuple[str, str, str]], workbook_params: list[ParameterInfo]) -> str:
-    chunks: list[str] = []
+    chunks: list[str] = [_datafolder_expression()]
     for name, _kind, expr in params:
+        if name == "DataFolder":
+            continue
         chunks.append(f"expression {name} = {expr}")
     for info in workbook_params:
         pname = re.sub(r"[^A-Za-z0-9_]", "_", info.caption) + "_Param"
@@ -399,7 +411,8 @@ def build_pbip_files(
     result: TranspileResult,
     *,
     source_stem: str | None = None,
-) -> tuple[dict[str, str], ConversionReport]:
+    source: object | None = None,
+) -> tuple[dict[str, str | bytes], ConversionReport]:
     """Return mapping of zip paths → file contents, plus conversion report."""
 
     name = _project_name(result.workbook_name, source_stem=source_stem)
@@ -410,7 +423,7 @@ def build_pbip_files(
         "SQL script remains available from the transpile API / SQL download; PBIP is the default package."
     )
 
-    files: dict[str, str] = {}
+    files: dict[str, str | bytes] = {}
     table_refs: list[str] = []
     query_order: list[str] = []
     all_params: list[tuple[str, str, str]] = []
@@ -446,6 +459,7 @@ def build_pbip_files(
     except Exception:
         pass
 
+    # Precompute table names so Data/ CSVs and M partitions share filenames
     for ds in result.datasources:
         if (ds.name or "").lower() == "parameters":
             continue
@@ -453,9 +467,29 @@ def build_pbip_files(
         table_name_by_ds[ds.name] = table_name
         if ds.caption:
             table_name_by_ds[ds.caption] = table_name
+
+    data_csvs, data_notes = collect_data_csvs(source, result, table_names=table_name_by_ds)
+    for path, blob in data_csvs.items():
+        files[path] = blob
+    for note in data_notes:
+        if "Hyper" in note or "hyper" in note:
+            report.hyper_todos.append(note)
+        else:
+            report.notes.append(note)
+
+    for ds in result.datasources:
+        if (ds.name or "").lower() == "parameters":
+            continue
+        table_name = table_name_by_ds[ds.name]
         cols = _source_columns(ds)
         col_types = [(c, tableau_type_to_m(dt)) for c, dt, _ in cols]
-        plan = plan_m_partition(ds, table_name=table_name, column_types=col_types)
+        csv_name = safe_csv_filename(table_name)
+        plan = plan_m_partition(
+            ds,
+            table_name=table_name,
+            column_types=col_types,
+            csv_filename=csv_name,
+        )
         all_params.extend(plan.parameters)
         for note in plan.notes:
             if plan.source_kind == "hyper":
@@ -578,20 +612,36 @@ def build_pbip_files(
     return files, report
 
 
-def build_pbip_zip(result: TranspileResult, *, source_stem: str | None = None) -> bytes:
-    files, _report = build_pbip_files(result, source_stem=source_stem)
+def build_pbip_zip(
+    result: TranspileResult,
+    *,
+    source_stem: str | None = None,
+    source: object | None = None,
+) -> bytes:
+    files, _report = build_pbip_files(result, source_stem=source_stem, source=source)
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path, content in sorted(files.items()):
-            zf.writestr(path, content.encode("utf-8"))
+            if isinstance(content, bytes):
+                zf.writestr(path, content)
+            else:
+                zf.writestr(path, content.encode("utf-8"))
     return buf.getvalue()
 
 
-def write_pbip_dir(result: TranspileResult, dest: Path) -> ConversionReport:
-    files, report = build_pbip_files(result)
+def write_pbip_dir(
+    result: TranspileResult,
+    dest: Path,
+    *,
+    source: object | None = None,
+) -> ConversionReport:
+    files, report = build_pbip_files(result, source=source)
     dest.mkdir(parents=True, exist_ok=True)
     for path, content in files.items():
         target = dest / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if isinstance(content, bytes):
+            target.write_bytes(content)
+        else:
+            target.write_text(content, encoding="utf-8")
     return report

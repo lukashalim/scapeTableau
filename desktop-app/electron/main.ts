@@ -21,7 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const ALLOWED = new Set([".hyper", ".twbx", ".tdsx", ".twb"]);
 const EXTRACT_ALLOWED = new Set([".hyper", ".twbx", ".tdsx", ".twb"]);
-const DIALECTS = new Set(["ansi", "snowflake", "postgres", "duckdb"]);
+const DIALECTS = new Set(["ansi", "snowflake", "postgres", "duckdb", "tsql"]);
 
 let mainWindow: BrowserWindow | null = null;
 

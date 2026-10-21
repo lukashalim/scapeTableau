@@ -10,7 +10,7 @@ from engine.schema import WorkbookParseError
 
 st.set_page_config(page_title="EscapeTableau — local", page_icon="▦", layout="wide")
 
-DIALECTS = ("ansi", "snowflake", "postgres", "duckdb")
+DIALECTS = ("ansi", "snowflake", "postgres", "duckdb", "tsql")
 
 st.markdown(
     """

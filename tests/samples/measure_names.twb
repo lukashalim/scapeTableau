@@ -1,0 +1,90 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<!-- Synthetic workbook covering Measure Names / Values strategies a, b, c -->
+<workbook source-build='2024.1.0' version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'>
+  <repository-location id='measure_names' path='/workbooks' />
+  <datasources>
+    <datasource caption='Orders' inline='true' name='federated.orders' version='18.1'>
+      <connection class='federated'>
+        <named-connections>
+          <named-connection caption='Orders' name='text.orders'>
+            <connection class='textscan' filename='Orders.csv' />
+          </named-connection>
+        </named-connections>
+        <relation connection='text.orders' name='Orders' table='[Orders.csv]' type='table' />
+      </connection>
+      <column caption='Region' datatype='string' name='[Region]' role='dimension' type='nominal' />
+      <column caption='Sales' datatype='real' name='[Sales]' role='measure' type='quantitative' />
+      <column caption='Profit' datatype='real' name='[Profit]' role='measure' type='quantitative' />
+      <column caption='Quantity' datatype='integer' name='[Quantity]' role='measure' type='quantitative' />
+      <column caption='Profit Ratio' datatype='real' name='[Calculation_pr]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='SUM([Profit]) / SUM([Sales])' />
+      </column>
+    </datasource>
+  </datasources>
+  <worksheets>
+    <!-- strategy a: Measure Names on Columns (Values well / expand measures) -->
+    <worksheet name='ValuesWell'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders' name='federated.orders' />
+          </datasources>
+          <datasource-dependencies datasource='federated.orders'>
+            <column datatype='real' name='[Sales]' role='measure' type='quantitative' />
+            <column datatype='real' name='[Profit]' role='measure' type='quantitative' />
+          </datasource-dependencies>
+          <filter class='categorical' column='[federated.orders].[:Measure Names]'>
+            <groupfilter function='union' user:op='manual'>
+              <groupfilter function='member' level='[:Measure Names]' member='"[federated.orders].[sum:Sales:qk]"' />
+              <groupfilter function='member' level='[:Measure Names]' member='"[federated.orders].[sum:Profit:qk]"' />
+            </groupfilter>
+          </filter>
+        </view>
+        <rows>[federated.orders].[none:Region:nk]</rows>
+        <cols>[federated.orders].[:Measure Names]</cols>
+        <panes>
+          <pane>
+            <encodings>
+              <text column='[federated.orders].[sum:Sales:qk]' />
+            </encodings>
+          </pane>
+        </panes>
+      </table>
+    </worksheet>
+    <!-- strategy b: Measure Names on Rows only (Names well) -->
+    <worksheet name='NamesWell'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders' name='federated.orders' />
+          </datasources>
+          <filter class='categorical' column='[federated.orders].[:Measure Names]'>
+            <groupfilter function='union' user:op='manual'>
+              <groupfilter function='member' level='[:Measure Names]' member='"[federated.orders].[sum:Quantity:qk]"' />
+            </groupfilter>
+          </filter>
+        </view>
+        <rows>[federated.orders].[:Measure Names]</rows>
+        <cols></cols>
+      </table>
+    </worksheet>
+    <!-- strategy c: Names × Values matrix -->
+    <worksheet name='NamesValuesMatrix'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders' name='federated.orders' />
+          </datasources>
+          <filter class='categorical' column='[federated.orders].[:Measure Names]'>
+            <groupfilter function='union' user:op='manual'>
+              <groupfilter function='member' level='[:Measure Names]' member='"[federated.orders].[sum:Sales:qk]"' />
+              <groupfilter function='member' level='[:Measure Names]' member='"[federated.orders].[usr:Calculation_pr:qk]"' />
+            </groupfilter>
+          </filter>
+        </view>
+        <rows>[federated.orders].[none:Region:nk]</rows>
+        <cols>([federated.orders].[:Measure Names] * [federated.orders].[Multiple Values])</cols>
+      </table>
+    </worksheet>
+  </worksheets>
+</workbook>

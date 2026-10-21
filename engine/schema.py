@@ -99,6 +99,18 @@ class WorksheetInfo(BaseModel):
     used_fields: list[str] = Field(default_factory=list)
 
 
+class MeasureNamesUsage(BaseModel):
+    """Worksheet use of Tableau Measure Names / Measure Values layout tokens."""
+
+    worksheet: str
+    datasource: str | None = None
+    measures: list[str] = Field(default_factory=list)
+    shelves: list[str] = Field(default_factory=list)
+    strategy: Literal["a", "b", "c"] = "a"
+    has_measure_names: bool = False
+    has_measure_values: bool = False
+
+
 class ArchiveMember(BaseModel):
     path: str
     size: int
@@ -188,6 +200,8 @@ class TranspileResult(BaseModel):
     dashboards: list[DashboardInfo] = Field(default_factory=list)
     dax_script: str = ""
     target: str = "sql"
+    measure_names: list[MeasureNamesUsage] = Field(default_factory=list)
+    conversion_summary: str = ""
 
     def model_dump_json_result(self) -> str:
         return self.model_dump_json(indent=2)
@@ -219,3 +233,4 @@ class ParsedWorkbook(BaseModel):
     dashboards: list[DashboardInfo] = Field(default_factory=list)
     fields: list[ColumnField] = Field(default_factory=list)
     worksheets: list[WorksheetInfo] = Field(default_factory=list)
+    measure_names: list[MeasureNamesUsage] = Field(default_factory=list)

@@ -209,10 +209,15 @@ def pbip_cmd(
 ) -> None:
     """Emit a downloadable Power BI Project (.pbip) zip (default migration artifact)."""
 
-    from engine.pbip import transpile_to_pbip
+    from engine import transpile
+    from engine.pbip import build_pbip_zip, transpile_to_pbip
 
     try:
-        zip_bytes, result = transpile_to_pbip(_read_source(path), dialect=dialect)
+        if path != "-":
+            zip_bytes, result = transpile_to_pbip(Path(path), dialect=dialect)
+        else:
+            result = transpile(_read_source(path), dialect=dialect)
+            zip_bytes = build_pbip_zip(result, source_stem="workbook")
     except WorkbookParseError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1) from exc

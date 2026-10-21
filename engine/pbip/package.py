@@ -11,9 +11,14 @@ from pathlib import Path
 
 from engine.pbip.conversion import ConversionEntry, ConversionReport, disposition_for_field
 from engine.pbip.dax_polish import (
-    hoist_compact_measure_filters,
     percent_format_string,
+    polish_dax,
     uniquify_measure_name,
+)
+from engine.pbip.desktop_paths import (
+    ensure_desktop_project_name,
+    looks_like_tableau_build_id,
+    plan_project_name,
 )
 from engine.pbip.m_partitions import plan_m_partition, tableau_type_to_m
 from engine.pbip.pbir import build_pbir_files, visual_caveats
@@ -39,10 +44,21 @@ from engine.schema import (
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
-def _project_name(workbook_name: str | None) -> str:
-    base = (workbook_name or "EscapeTableau").strip() or "EscapeTableau"
-    cleaned = _SAFE_NAME.sub("_", base).strip(" ._") or "EscapeTableau"
-    return cleaned[:80]
+def _project_name(
+    workbook_name: str | None,
+    *,
+    source_stem: str | None = None,
+) -> str:
+    """Prefer a human file stem over Tableau ``source-build`` version strings."""
+
+    preferred = source_stem
+    if not preferred or looks_like_tableau_build_id(preferred):
+        preferred = workbook_name if not looks_like_tableau_build_id(workbook_name) else None
+    if not preferred:
+        preferred = source_stem or workbook_name or "BIEscape"
+    name = plan_project_name(preferred, fallback="BIEscape", max_len=64)
+    # Forecast unzip under a typical Downloads path (cyphou desktop_paths pattern)
+    return ensure_desktop_project_name("C:/Users/User/Downloads", name)
 
 
 def _lineage() -> str:
@@ -208,7 +224,7 @@ def _calc_column_block(field: CalculatedField) -> str | None:
 
 
 def _measure_block(field: CalculatedField, *, measure_name: str | None = None) -> str:
-    dax = hoist_compact_measure_filters((field.dax or "").strip())
+    dax = polish_dax((field.dax or "").strip())
     pct = percent_format_string(field.caption, field.datatype, dax)
     fmt = pct or _format_string(field.datatype, "measure") or "#,0.00"
     folder = "Converted measures"
@@ -372,10 +388,14 @@ table '{table.replace("'", "''")}'
     return out
 
 
-def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], ConversionReport]:
+def build_pbip_files(
+    result: TranspileResult,
+    *,
+    source_stem: str | None = None,
+) -> tuple[dict[str, str], ConversionReport]:
     """Return mapping of zip paths → file contents, plus conversion report."""
 
-    name = _project_name(result.workbook_name)
+    name = _project_name(result.workbook_name, source_stem=source_stem)
     sm_folder = f"{name}.SemanticModel"
     report_folder = f"{name}.Report"
     report = ConversionReport()
@@ -403,6 +423,10 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
     report.notes.append(
         "TMDL/PBIR templates follow vendored Franssens patterns "
         "(compatLevel 1702, pbism 4.2, PBIR definition/ pages). See docs/third-party-pbip.md."
+    )
+    report.notes.append(
+        "Desktop openability extras adapted from cyphou/TableauToPowerBI (MIT): "
+        "path-budget naming, ==→= DAX heal, TMDL ''-safe validation. See THIRD_PARTY_NOTICES."
     )
     try:
         from engine.sqlglot_util import custom_sql_notes
@@ -437,7 +461,9 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
         for field in _fields_for_ds(result, ds):
             disp, reason = disposition_for_field(field)
             kind = field.dax_kind or "calculated_column"
-            polished = hoist_compact_measure_filters(field.dax or "")
+            polished = polish_dax(field.dax or "")
+            if polished and polished != (field.dax or ""):
+                field.dax = polished
             for todo in getattr(field, "dax_notes", None) or []:
                 report.dax_todos.append(f"{field.caption}: {todo}")
                 disp = "approximated"
@@ -541,8 +567,8 @@ def build_pbip_files(result: TranspileResult) -> tuple[dict[str, str], Conversio
     return files, report
 
 
-def build_pbip_zip(result: TranspileResult) -> bytes:
-    files, _report = build_pbip_files(result)
+def build_pbip_zip(result: TranspileResult, *, source_stem: str | None = None) -> bytes:
+    files, _report = build_pbip_files(result, source_stem=source_stem)
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path, content in sorted(files.items()):

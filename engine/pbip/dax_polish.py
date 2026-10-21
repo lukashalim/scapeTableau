@@ -2,11 +2,68 @@
 
 Primary: never leave compact ``'Table'[Col] = [Measure]`` filters inside CALCULATE —
 hoist the measure into a VAR (illegal PLACEHOLDER error at query time).
+
+Also includes a small safe heal from cyphou/TableauToPowerBI (MIT): Tableau ``==`` → DAX ``=``.
+See THIRD_PARTY_NOTICES.
 """
 
 from __future__ import annotations
 
 import re
+
+
+def heal_double_equals(dax: str) -> str:
+    """Convert Tableau ``==`` equality to DAX ``=`` outside strings / brackets / table quotes.
+
+    Adapted from cyphou ``dax_healing.heal_double_equals`` (MIT) — semantics-preserving only.
+    """
+
+    if not dax or "==" not in dax:
+        return dax
+    out: list[str] = []
+    i, n = 0, len(dax)
+    while i < n:
+        ch = dax[i]
+        if ch == "[":
+            start = i
+            i += 1
+            while i < n:
+                if dax[i] == "]" and i + 1 < n and dax[i + 1] == "]":
+                    i += 2
+                    continue
+                if dax[i] == "]":
+                    i += 1
+                    break
+                i += 1
+            out.append(dax[start:i])
+            continue
+        if ch in ('"', "'"):
+            q = ch
+            start = i
+            i += 1
+            while i < n:
+                if dax[i] == q and i + 1 < n and dax[i + 1] == q:
+                    i += 2
+                    continue
+                if dax[i] == q:
+                    i += 1
+                    break
+                i += 1
+            out.append(dax[start:i])
+            continue
+        if (
+            ch == "="
+            and i + 1 < n
+            and dax[i + 1] == "="
+            and (i == 0 or dax[i - 1] not in "<>!=")
+        ):
+            out.append("=")
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
 
 # CALCULATE(expr, 'T'[C] = [Measure Name], ...) with measure on RHS
 _COMPACT_FILTER = re.compile(
@@ -21,6 +78,13 @@ _ONE_FILTER = re.compile(
     r"((?:'(?:[^']|'')+'|\w+)\[[^\]]+\])\s*=\s*(\[[^\]]+\])",
     re.IGNORECASE,
 )
+
+
+def polish_dax(dax: str) -> str:
+    """Apply safe Desktop-oriented DAX polishes in order."""
+
+    text = heal_double_equals(dax or "")
+    return hoist_compact_measure_filters(text)
 
 
 def hoist_compact_measure_filters(dax: str) -> str:

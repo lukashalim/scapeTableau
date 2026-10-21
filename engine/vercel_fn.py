@@ -6,6 +6,7 @@ import json
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import unquote
 
 from engine import extract_to_xlsx, transpile
@@ -92,7 +93,8 @@ def pbip_payload(filename: str, payload: bytes, dialect: str = "ansi") -> tuple[
         return status, body, "application/json; charset=utf-8"
     try:
         result = transpile(payload, dialect=dialect or "ansi")
-        zip_bytes = build_pbip_zip(result)
+        stem = Path(filename).stem if filename else None
+        zip_bytes = build_pbip_zip(result, source_stem=stem)
     except WorkbookParseError as exc:
         status, body = _json_bytes({"error": exc.message}, 400)
         return status, body, "application/json; charset=utf-8"

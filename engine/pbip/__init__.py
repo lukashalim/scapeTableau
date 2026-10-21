@@ -16,8 +16,16 @@ __all__ = [
 ]
 
 
+def _source_stem(source) -> str | None:
+    if isinstance(source, Path):
+        return source.stem
+    if isinstance(source, str) and (source.endswith(".twb") or source.endswith(".twbx")):
+        return Path(source).stem
+    return None
+
+
 def transpile_to_pbip(source, *, dialect: str = "ansi") -> tuple[bytes, TranspileResult]:
     """Transpile a workbook and return (zip_bytes, result)."""
 
     result = transpile(source, dialect=dialect, target="sql")
-    return build_pbip_zip(result), result
+    return build_pbip_zip(result, source_stem=_source_stem(source)), result

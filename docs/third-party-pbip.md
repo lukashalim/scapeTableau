@@ -16,6 +16,23 @@ via optional `tableauhyperapi`. Copilot CLI is **not** incorporated.
 | **pantab** + **tableauhyperapi** ([innobi/pantab](https://github.com/innobi/pantab)) | Hyper path stays `engine/hyper.py` + optional `tableauhyperapi` | Same local-only gate | **Never on Vercel** | pantab evaluated: needs pyarrow/numpy stack that fights pinned pandas/numpy here; **not adopted**. Keep tableauhyperapi export |
 | **pbir-utils** ([akhilannan/pbir-utils](https://github.com/akhilannan/pbir-utils)) | **Not depended on** | N/A | N/A | Stage 3 visuals use vendored Franssens `pbi.kb` / `tableEx` patterns; pbir-utils does not simplify our emitter enough to take a live dependency |
 | **Franssens tableau-to-powerbi-migration** (MIT) | Vendored sparse TMDL/PBIR/visual templates + DAX guide | Patterns only | Patterns only | See `vendor/franssens-tableau-to-powerbi/NOTICE` — **no Copilot CLI** |
+| **cyphou/TableauToPowerBI** (MIT) | **Adapted ideas only** — Desktop path budget, `==`→`=` DAX heal, TMDL `''` validation | Same | Same | **No CLI dependency**. Attribution in `THIRD_PARTY_NOTICES`. Repo was renamed from `Tableau-To-PowerBI`. |
+
+## cyphou/TableauToPowerBI comparison (what we ported)
+
+Upstream is a full extract→JSON→generate CLI (`migrate.py`) with openability/heal stacks.
+BIEscape stays single-pass AST transpile + in-memory PBIP zip for the web app.
+
+| Area | Theirs | Ours | Ported? |
+| --- | --- | --- | --- |
+| `.pbip` `$schema` | Emits `$schema` | **Omits** (Desktop refuses) | Keep ours |
+| `.platform` / pbism 4.2 / pbir 4.0 | Yes | Yes | Already had |
+| BaseTheme file | References `CY26SU04` **without** writing the JSON | Vendors + writes `CY24SU10.json` | Keep ours (stricter) |
+| Path budget (260/248) | `desktop_paths.py` | `engine/pbip/desktop_paths.py` | **Yes** |
+| DAX `==` → `=` | `dax_healing` | `heal_double_equals` in `dax_polish` | **Yes** |
+| LOD / table calcs / MN-MV | Broader WINDOW/RUNNING/quick-calc map | AST LOD + table_calcs + MN skip/expand notes | Partial — not their CLI |
+| Hyper | Optional HyperAPI → sample M `#table` | Desktop `tableauhyperapi`; serverless TODO CSV | Keep isolation |
+| Visual map | 190-type matrix + custom GUIDs | Franssens subset + mark-class map | Not bulk-ported |
 
 ## Franssens vendor set
 

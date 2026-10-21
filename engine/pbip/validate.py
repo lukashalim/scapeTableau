@@ -51,11 +51,21 @@ def _validate_required(instance: dict, schema: dict, path: str, errors: list[str
             errors.append(f"{path}: missing required key '{key}'")
 
 
+def _unquote_tmdl_ident(raw: str) -> str:
+    """Decode a TMDL quoted identifier (``''`` → ``'``)."""
+
+    text = (raw or "").strip()
+    if len(text) >= 2 and text[0] == "'" and text[-1] == "'":
+        return text[1:-1].replace("''", "'")
+    return text.replace("''", "'")
+
+
 def _parse_tmdl_model(files: dict[str, str]) -> ModelCatalog:
     cat = ModelCatalog()
-    table_re = re.compile(r"^table\s+'([^']+)'|^table\s+(\S+)", re.M)
-    col_re = re.compile(r"^\tcolumn\s+'([^']+)'|^\tcolumn\s+(\S+)", re.M)
-    meas_re = re.compile(r"^\tmeasure\s+'([^']+)'|^\tmeasure\s+(\S+)", re.M)
+    # Quoted idents may contain doubled apostrophes: 'Coût d''Achat'
+    table_re = re.compile(r"^table\s+'((?:[^']|'')+)'|^table\s+(\S+)", re.M)
+    col_re = re.compile(r"^\tcolumn\s+'((?:[^']|'')+)'|^\tcolumn\s+(\S+)", re.M)
+    meas_re = re.compile(r"^\tmeasure\s+'((?:[^']|'')+)'|^\tmeasure\s+(\S+)", re.M)
     current: str | None = None
     for path, text in files.items():
         if not path.endswith(".tmdl"):
@@ -63,7 +73,7 @@ def _parse_tmdl_model(files: dict[str, str]) -> ModelCatalog:
         for line in text.splitlines():
             tm = table_re.match(line)
             if tm:
-                current = tm.group(1) or tm.group(2)
+                current = _unquote_tmdl_ident(tm.group(1) or tm.group(2) or "")
                 if current:
                     cat.tables.add(current)
                     cat.columns.setdefault(current, set())
@@ -74,15 +84,19 @@ def _parse_tmdl_model(files: dict[str, str]) -> ModelCatalog:
             if cm:
                 col = cm.group(1) or cm.group(2)
                 if col:
-                    # strip trailing ` = expr`
-                    col = col.split("=", 1)[0].strip().strip("'")
+                    # strip trailing ` = expr` for calculated columns
+                    if cm.group(1) is None and "=" in col:
+                        col = col.split("=", 1)[0].strip()
+                    col = _unquote_tmdl_ident(col)
                     cat.columns[current].add(col)
                 continue
             mm = meas_re.match(line)
             if mm:
                 m = mm.group(1) or mm.group(2)
                 if m:
-                    m = m.split("=", 1)[0].strip().strip("'")
+                    if mm.group(1) is None and "=" in m:
+                        m = m.split("=", 1)[0].strip()
+                    m = _unquote_tmdl_ident(m)
                     cat.measures.add(m)
     return cat
 
@@ -141,6 +155,11 @@ def validate_pbip_files(files: dict[str, str], *, fail: bool = True) -> list[str
     platforms = [n for n in names if n.endswith(".platform") or n.endswith("/.platform")]
     if len(platforms) < 2:
         errors.append("expected .platform in both Report and SemanticModel folders")
+
+    # Desktop path budget (cyphou openability pattern) — forecast unzip under Downloads
+    from engine.pbip.desktop_paths import check_zip_paths
+
+    errors.extend(check_zip_paths(sorted(names)))
 
     # report.json resource packages → files exist
     report_paths = [n for n in names if n.endswith("/definition/report.json")]

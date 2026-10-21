@@ -45,12 +45,15 @@ def _validator(schema: dict):
     return jsonschema.Draft7Validator(schema, resolver=resolver)
 
 
-def _validate_required_only(instance: dict, schema: dict) -> None:
+def _validate_required_only(instance: dict, schema: dict, *, skip_keys: set[str] | None = None) -> None:
     """Validate type/required locally; skip unresolved remote $ref failures."""
 
+    skip = skip_keys or set()
     # Strip $ref-heavy branches by checking top-level required + types only when cheap.
     required = schema.get("required") or []
     for key in required:
+        if key in skip:
+            continue
         assert key in instance, f"missing required key {key}"
     props = schema.get("properties") or {}
     for key, prop in props.items():
@@ -78,8 +81,16 @@ def test_superstore_pbip_json_schema() -> None:
     sm = f"{prefix}.SemanticModel"
     report = f"{prefix}.Report"
 
+    # Top-level .pbip: Desktop refuses "$schema" — validate Desktop keys only.
+    pbip_instance = _zip_json(zip_bytes, pbip_name)
+    assert "$schema" not in pbip_instance
+    _validate_required_only(
+        pbip_instance,
+        _load_schema("fabric/pbip/pbipProperties/1.0.0/schema.json"),
+        skip_keys={"$schema"},
+    )
+
     checks = [
-        (pbip_name, "fabric/pbip/pbipProperties/1.0.0/schema.json"),
         (f"{sm}/definition.pbism", "fabric/item/semanticModel/definitionProperties/1.0.0/schema.json"),
         (f"{report}/definition.pbir", "fabric/item/report/definitionProperties/2.0.0/schema.json"),
         (f"{report}/definition/version.json", "fabric/item/report/definition/versionMetadata/1.0.0/schema.json"),

@@ -169,7 +169,7 @@ npm run dev
 Open http://localhost:4317 in the browser.
 
 - Drag-and-drop target for `.twb` and `.twbx` files.
-- "Try with Sample Workbook" button loads `samples/superstore_calcs.twbx` (includes `Data/Orders.csv` so the PBIP DataFolder refreshes in Desktop without Postgres).
+- "Try with Sample Workbook" button loads `web/public/samples/US_Superstore_10.0.twbx` (Tableau Desktop 2023.1 Superstore sample, with Hyper extracts). The synthetic `samples/superstore_calcs.twbx` fixture stays for unit tests only.
 - Workspace tabs after a successful upload:
   - **Transpile to SQL/dbt** — SQL / DAX / Audit / Markdown
   - **Extract Data** — archive inventory, custom SQL, Hyper index, Download `.xlsx`

@@ -234,13 +234,12 @@ def _load_companion_orders(source: Source | None) -> bytes | None:
     if path.suffix.lower() == ".twbx":
         return None
     companion = path.with_suffix(".twbx")
-    # Website / repo layout: samples/superstore_calcs.twb + .twbx
+    # Calc fixture only: samples/superstore_calcs.twb next to its .twbx.
+    # The public site sample is US_Superstore_10.0.twbx and does not use this path.
     candidates = [companion]
     repo_sample = Path(__file__).resolve().parents[2] / "samples" / "superstore_calcs.twbx"
     if path.stem.lower() == "superstore_calcs":
         candidates.append(repo_sample)
-        web_sample = Path(__file__).resolve().parents[2] / "web" / "public" / "samples" / "superstore_calcs.twbx"
-        candidates.append(web_sample)
     for candidate in candidates:
         if not candidate.is_file():
             continue

@@ -37,6 +37,30 @@ def test_stage3_pbir_definition_tree() -> None:
     assert result.worksheets  # worksheets surfaced for Stage 3
 
 
+def test_overview_visual_includes_numeric_table_calcs() -> None:
+    """Region-only shelves dropped pcto:sum:* pills, so the table had no numbers."""
+
+    zip_bytes, _ = transpile_to_pbip(SAMPLES / "superstore_calcs.twb")
+    names = _names(zip_bytes)
+    visuals = [n for n in names if n.endswith("/visual.json")]
+    blob = "\n".join(_read(zip_bytes, n) for n in visuals)
+    assert '"Property": "% of Total Total Profit"' in blob
+    assert '"Property": "% of Total Total Revenue"' in blob
+    assert '"Entity": "__Measures"' in blob
+    sample = _read(zip_bytes, next(n for n in names if n.endswith("Sample Superstore.csv")))
+    lines = [ln for ln in sample.splitlines() if ln.strip()]
+    assert len(lines) >= 3
+    header = lines[0].lstrip("\ufeff").split(",")
+    profit_i = header.index("Total Profit")
+    revenue_i = header.index("Total Revenue")
+    sales_i = header.index("Sales")
+    for line in lines[1:]:
+        cells = line.split(",")
+        assert cells[profit_i] == cells[header.index("Profit")]
+        assert cells[profit_i] not in {"", "0"}
+        assert cells[revenue_i] == cells[sales_i]
+
+
 def test_hoist_compact_measure_filters() -> None:
     raw = "CALCULATE(SUM('T'[Sales]), 'T'[Year] = [Year Parameter Value])"
     out = hoist_compact_measure_filters(raw)

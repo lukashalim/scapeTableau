@@ -373,6 +373,10 @@ def _shelf_token_name(inner: str) -> tuple[str, bool]:
     if ":" in text:
         parts = text.split(":")
         prefix = parts[0].lower()
+        # Table-calc pills: pcto:sum:Total Profit:qk. Keep the instance name so
+        # it matches the calculated field; parts[1] is the agg, not the field.
+        if len(parts) >= 4 and parts[1].lower() in _MEASURE_PREFIXES:
+            return text, False
         name = parts[1] if len(parts) > 1 else text
         is_dim = prefix in {"none", "nk"} or prefix not in _MEASURE_PREFIXES
         if prefix in _MEASURE_PREFIXES:

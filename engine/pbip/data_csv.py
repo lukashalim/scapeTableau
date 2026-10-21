@@ -92,10 +92,50 @@ def _parse_csv_bytes(payload: bytes) -> tuple[list[str], list[list[str]]]:
     return headers, body
 
 
+# Tableau often declares Total Profit / Total Revenue while the extract only
+# has Profit / Sales. Copy into a fully blank target so % of Total measures
+# have a number to show.
+_BLANK_COLUMN_FILL = {
+    "total profit": "profit",
+    "total revenue": "sales",
+}
+
+
+def _fill_blank_alias_columns(
+    headers: list[str],
+    rows: list[list[object]],
+) -> list[str]:
+    """Fill an all-blank target column from a sibling source column. Returns notes."""
+
+    if not headers or not rows:
+        return []
+    index = {h.strip().lower(): i for i, h in enumerate(headers)}
+    notes: list[str] = []
+    for target, source in _BLANK_COLUMN_FILL.items():
+        ti = index.get(target)
+        si = index.get(source)
+        if ti is None or si is None:
+            continue
+        if any(ti < len(row) and str(row[ti]).strip() for row in rows):
+            continue
+        filled = 0
+        for row in rows:
+            if si < len(row) and ti < len(row) and str(row[si]).strip():
+                row[ti] = row[si]
+                filled += 1
+        if filled:
+            notes.append(
+                f"Filled blank '{headers[ti]}' from '{headers[si]}' ({filled} rows) "
+                "so table-calc measures have numeric values."
+            )
+    return notes
+
+
 def _align_rows(
     target_headers: list[str],
     source_headers: list[str],
     source_rows: list[list[str]],
+    notes: list[str] | None = None,
 ) -> list[list[object]]:
     """Map source columns onto target headers by case-insensitive name."""
 
@@ -109,6 +149,9 @@ def _align_rows(
             idx = index.get(header.strip().lower())
             aligned.append(row[idx] if idx is not None and idx < len(row) else "")
         out.append(aligned)
+    extra = _fill_blank_alias_columns(target_headers, out)
+    if notes is not None:
+        notes.extend(extra)
     return out
 
 
@@ -398,7 +441,7 @@ def collect_data_csvs(
             used_headers = headers or src_headers
             if used_headers and src_rows:
                 rows = (
-                    _align_rows(used_headers, src_headers, src_rows)
+                    _align_rows(used_headers, src_headers, src_rows, notes)
                     if src_headers
                     else [list(r) for r in src_rows]
                 )

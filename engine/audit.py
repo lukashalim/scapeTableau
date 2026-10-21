@@ -5,12 +5,20 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from engine.measure_names import (
+    build_conversion_summary,
+    dax_measure_names_block,
+    dax_raw_measure_assignments,
+    sql_measure_names_comments,
+)
 from engine.schema import (
     CalculatedField,
+    ColumnField,
     DashboardInfo,
     DatasourceInfo,
     ExtractInventory,
     InspectSnapshot,
+    MeasureNamesUsage,
     ParameterInfo,
     ParseStatus,
     TranspileResult,
@@ -206,6 +214,7 @@ def build_sql_script(
     dialect: str = "ansi",
     script_style: str = "sql",
     parameters: list[ParameterInfo] | None = None,
+    measure_names: list[MeasureNamesUsage] | None = None,
 ) -> str:
     """Emit one SQL view per datasource at source grain.
 
@@ -226,6 +235,7 @@ def build_sql_script(
     lines.append("-- One view per datasource (SELECT * + row-level calc columns).")
     lines.append("")
     lines.extend(_parameter_comment_block(parameters))
+    lines.extend(sql_measure_names_comments(list(measure_names or [])))
     for ds in datasources:
         lines.extend(_datasource_comment(ds, dialect))
         lines.append("")
@@ -333,6 +343,8 @@ def build_dax_script(
     *,
     workbook_name: str | None = None,
     parameters: list[ParameterInfo] | None = None,
+    measure_names: list[MeasureNamesUsage] | None = None,
+    workbook_fields: list[ColumnField] | None = None,
 ) -> str:
     from engine.transpiler import param_dax_literal, param_measure_name
 
@@ -340,6 +352,15 @@ def build_dax_script(
     if workbook_name:
         lines.append(f"// Source workbook: {workbook_name}")
     table = _dax_table_name(fields)
+    usages = list(measure_names or [])
+    lines.extend(
+        dax_measure_names_block(
+            usages,
+            dax_table=table,
+            calculated_fields=fields,
+            columns=workbook_fields,
+        )
+    )
     measures = [f for f in fields if (f.dax_kind or "measure") == "measure"]
     columns = [f for f in fields if (f.dax_kind or "measure") != "measure"]
 
@@ -373,6 +394,16 @@ def build_dax_script(
             lines.append("")
 
     _emit_section("Measures", measures, kind="measure")
+    # Raw columns referenced by Measure Names filters (not already calculated fields)
+    raw_assignments = dax_raw_measure_assignments(
+        usages, dax_table=table, calculated_fields=fields
+    )
+    if raw_assignments:
+        lines.append("")
+        lines.append("// Measures from Measure Names filter (raw columns)")
+        for assign in raw_assignments:
+            lines.append(assign)
+            lines.append("")
     _emit_section("Calculated columns", columns, kind="column")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -382,7 +413,12 @@ def _md_cell(value: str | None) -> str:
     return text.replace("|", "\\|").replace("\n", " ").strip()
 
 
-def build_markdown_audit(fields: list[CalculatedField], datasources: list[DatasourceInfo]) -> str:
+def build_markdown_audit(
+    fields: list[CalculatedField],
+    datasources: list[DatasourceInfo],
+    *,
+    measure_names: list[MeasureNamesUsage] | None = None,
+) -> str:
     lines = [
         "# EscapeTableau audit",
         "",
@@ -420,6 +456,9 @@ def build_markdown_audit(fields: list[CalculatedField], datasources: list[Dataso
             "",
         ]
     )
+    summary = build_conversion_summary(list(measure_names or []))
+    if summary.strip():
+        lines.append(summary)
     return "\n".join(lines)
 
 
@@ -435,7 +474,10 @@ def assemble_result(
     target: str = "sql",
     script_style: str = "sql",
     parameters: list[ParameterInfo] | None = None,
+    measure_names: list[MeasureNamesUsage] | None = None,
+    workbook_fields: list[ColumnField] | None = None,
 ) -> TranspileResult:
+    usages = list(measure_names or [])
     return TranspileResult(
         calculated_fields=fields,
         datasources=datasources,
@@ -446,15 +488,24 @@ def assemble_result(
             dialect=dialect,
             script_style=script_style,
             parameters=parameters,
+            measure_names=usages,
         ),
-        markdown_audit=build_markdown_audit(fields, datasources),
+        markdown_audit=build_markdown_audit(
+            fields, datasources, measure_names=usages
+        ),
         workbook_name=workbook_name,
         dialect=dialect,
         inspect=inspect,
         extract_inventory=extract_inventory,
         dashboards=list(dashboards or (inspect.dashboards if inspect else [])),
         dax_script=build_dax_script(
-            fields, workbook_name=workbook_name, parameters=parameters
+            fields,
+            workbook_name=workbook_name,
+            parameters=parameters,
+            measure_names=usages,
+            workbook_fields=workbook_fields,
         ),
         target=target,
+        measure_names=usages,
+        conversion_summary=build_conversion_summary(usages),
     )

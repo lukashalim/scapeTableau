@@ -11,6 +11,11 @@ from xml.etree import ElementTree as ET
 from engine.redact import redact_connect_fragment, redact_password_attr
 import re
 
+from engine.measure_names import (
+    detect_measure_names_usages,
+    is_mn_mv_token,
+    scrub_worksheet_mn_mv,
+)
 from engine.schema import (
     ArchiveKind,
     ArchiveMember,
@@ -622,7 +627,7 @@ def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
         used: list[str] = []
 
         def _add_used(field_name: str, is_dim: bool) -> None:
-            if not field_name:
+            if not field_name or is_mn_mv_token(field_name):
                 return
             if field_name not in used:
                 used.append(field_name)
@@ -637,6 +642,8 @@ def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
                 bits = _fields_from_shelf_text(_text_content(child))
                 target = rows if tag == "rows" else cols
                 for field_name, is_dim in bits:
+                    if is_mn_mv_token(field_name):
+                        continue
                     if field_name not in target:
                         target.append(field_name)
                     _add_used(field_name, is_dim)
@@ -650,13 +657,15 @@ def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
                     for field_name, _is_dim in bits:
                         _add_used(field_name, False)
         sheets.append(
-            WorksheetInfo(
-                name=name,
-                datasource=ds_name,
-                rows=rows,
-                cols=cols,
-                dimensions=dimensions,
-                used_fields=used,
+            scrub_worksheet_mn_mv(
+                WorksheetInfo(
+                    name=name,
+                    datasource=ds_name,
+                    rows=rows,
+                    cols=cols,
+                    dimensions=dimensions,
+                    used_fields=used,
+                )
             )
         )
     return sheets
@@ -701,6 +710,14 @@ def parse_workbook(source: Source) -> ParsedWorkbook:
     calculated.extend(table_calcs)
     all_fields.extend(table_calc_fields)
 
+    # Never treat Measure Names / Values layout tokens as calculated columns.
+    calculated = [c for c in calculated if not is_mn_mv_token(c.name) and not is_mn_mv_token(c.caption)]
+    all_fields = [f for f in all_fields if not is_mn_mv_token(f.name) and not is_mn_mv_token(f.caption)]
+
+    measure_names = detect_measure_names_usages(
+        root, name_maps=name_maps, datasources=datasources
+    )
+
     return ParsedWorkbook(
         workbook_name=repo or workbook_name or filename,
         datasources=datasources,
@@ -711,4 +728,5 @@ def parse_workbook(source: Source) -> ParsedWorkbook:
         dashboards=_parse_dashboards(root),
         fields=all_fields,
         worksheets=_parse_worksheets(root),
+        measure_names=measure_names,
     )

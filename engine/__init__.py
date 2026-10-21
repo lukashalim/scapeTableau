@@ -9,6 +9,7 @@ from typing import BinaryIO
 from engine.audit import assemble_result
 from engine.extract import build_inventory, extract_to_xlsx
 from engine.inspect import build_inspect
+from engine.measure_names import reject_mn_mv_calculated
 from engine.parser import parse_workbook
 from engine.schema import (
     CalculatedField,
@@ -312,6 +313,7 @@ def transpile(
                 )
             )
 
+    fields = reject_mn_mv_calculated(fields)
     inspect = build_inspect(workbook, fields)
     inventory = build_inventory(workbook=workbook)
     return assemble_result(
@@ -325,4 +327,6 @@ def transpile(
         target=target_l,
         script_style=script_style,
         parameters=workbook.parameters,
+        measure_names=workbook.measure_names,
+        workbook_fields=workbook.fields,
     )

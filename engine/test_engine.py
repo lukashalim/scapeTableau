@@ -210,6 +210,39 @@ def test_sample_workbook_round_trip() -> None:
     assert "| Caption |" in result.markdown_audit
 
 
+def test_worksheet_table_calcs_listed_as_skipped() -> None:
+    """Worksheet <table-calc> pills must appear in calculated_fields even without SQL windows."""
+
+    result = transpile(SAMPLE)
+    captions = {field.caption: field for field in result.calculated_fields}
+    assert "% of Total Total Profit" in captions
+    assert "% of Total Total Revenue" in captions
+
+    profit = captions["% of Total Total Profit"]
+    assert profit.formula == "% of Total SUM(Total Profit) along Table (Across)"
+    assert profit.status == ParseStatus.skipped
+    assert "table calc" in (profit.error or "").lower()
+    assert "-- SKIPPED [table calc]" in profit.sql
+    assert "Table (Across)" in profit.sql
+
+    revenue = captions["% of Total Total Revenue"]
+    assert revenue.formula == "% of Total SUM(Total Revenue) along Table (Across)"
+    assert revenue.status == ParseStatus.skipped
+
+    dumped = json.loads(result.model_dump_json())
+    dumped_captions = {f["caption"] for f in dumped["calculated_fields"]}
+    assert "% of Total Total Profit" in dumped_captions
+    assert "% of Total Total Revenue" in dumped_captions
+    assert "-- SKIPPED [skipped] % of Total Total Profit" in result.sql_script
+
+    # Inspect field list includes table-calc pills as calculated columns.
+    assert result.inspect is not None
+    inspect_captions = {f.caption for f in result.inspect.fields if f.calculated}
+    assert "% of Total Total Profit" in inspect_captions
+    assert "% of Total Total Revenue" in inspect_captions
+    assert result.inspect.counts.calculated_fields >= len(result.calculated_fields)
+
+
 def test_classify_sql_kind_row_vs_aggregate() -> None:
     from engine.transpiler import classify_sql_kind, parse_formula
 

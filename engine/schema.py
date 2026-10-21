@@ -199,6 +199,9 @@ class RawCalculatedField(BaseModel):
     formula: str
     datasource_name: str
     datasource_caption: str | None = None
+    # Worksheet <table-calc> pills (percent of total, etc.) — listed, not SQL-translated.
+    is_table_calc: bool = False
+    worksheet: str | None = None
 
 
 class ParsedWorkbook(BaseModel):

@@ -364,6 +364,226 @@ def _fields_from_shelf_text(text: str | None) -> list[tuple[str, bool]]:
     return found
 
 
+_TABLE_CALC_LABELS: dict[str, str] = {
+    "PctTotal": "% of Total",
+    "CumTotal": "Running Total",
+    "WindowTotal": "Window Total",
+    "Difference": "Difference",
+    "PctDiff": "% Difference",
+    "PctValue": "% of Value",
+    "Rank": "Rank",
+    "PctRank": "Percentile",
+}
+
+_ORDERING_LABELS: dict[str, str] = {
+    "Rows": "Table (Across)",
+    "Cols": "Table (Down)",
+    "Pane": "Pane (Across)",
+    "PaneAcrossThenDown": "Pane (Across then Down)",
+    "PaneDownThenAcross": "Pane (Down then Across)",
+    "Cell": "Cell",
+    "Table": "Table (Across)",
+    "TableAcrossThenDown": "Table (Across then Down)",
+    "TableDownThenAcross": "Table (Down then Across)",
+}
+
+_DERIVATION_AGG: dict[str, str] = {
+    "sum": "SUM",
+    "avg": "AVG",
+    "average": "AVG",
+    "min": "MIN",
+    "max": "MAX",
+    "cnt": "COUNT",
+    "count": "COUNT",
+    "ctd": "COUNTD",
+    "countd": "COUNTD",
+    "attr": "ATTR",
+    "med": "MEDIAN",
+    "stdev": "STDEV",
+    "var": "VAR",
+    "usr": "AGG",
+    "none": "",
+    "year": "YEAR",
+    "quarter": "QUARTER",
+    "month": "MONTH",
+    "week": "WEEK",
+    "day": "DAY",
+}
+
+
+def _agg_from_derivation(derivation: str | None, instance_name: str | None) -> str:
+    if derivation:
+        mapped = _DERIVATION_AGG.get(derivation.strip().lower())
+        if mapped is not None:
+            return mapped
+        return derivation.strip().upper()
+    # Fallback: pcto:sum:Field:qk → SUM
+    inner = _column_name_key(instance_name)
+    if ":" in inner:
+        parts = inner.split(":")
+        if len(parts) >= 2:
+            mapped = _DERIVATION_AGG.get(parts[1].lower())
+            if mapped:
+                return mapped
+    return "SUM"
+
+
+def _field_caption_for_column(
+    column_attr: str | None,
+    instance_name: str | None,
+    name_map: dict[str, str],
+) -> str:
+    key = _column_name_key(column_attr)
+    if key:
+        caption = name_map.get(key) or name_map.get(f"[{key}]") or name_map.get(column_attr or "")
+        if caption:
+            return caption
+        return key
+    inner = _column_name_key(instance_name)
+    if ":" in inner:
+        parts = inner.split(":")
+        # e.g. pcto:sum:Total Profit:qk
+        if len(parts) >= 3:
+            return parts[2] or inner
+    return inner or "Field"
+
+
+def _table_calc_addressing(table_calc: ET.Element) -> str:
+    ordering = (table_calc.get("ordering-type") or table_calc.get("ordering") or "Rows").strip()
+    return _ORDERING_LABELS.get(ordering, ordering or "Table (Across)")
+
+
+def _table_calc_label(calc_type: str | None) -> str:
+    if not calc_type:
+        return "Table Calculation"
+    return _TABLE_CALC_LABELS.get(calc_type, calc_type)
+
+
+def _describe_table_calc(
+    *,
+    calc_type: str | None,
+    derivation: str | None,
+    instance_name: str | None,
+    column_attr: str | None,
+    name_map: dict[str, str],
+    table_calc: ET.Element,
+) -> tuple[str, str]:
+    """Return (caption, formula) for a worksheet table calc pill."""
+
+    label = _table_calc_label(calc_type)
+    field_caption = _field_caption_for_column(column_attr, instance_name, name_map)
+    agg = _agg_from_derivation(derivation, instance_name)
+    addressing = _table_calc_addressing(table_calc)
+    caption = f"{label} {field_caption}".strip()
+    if agg:
+        formula = f"{label} {agg}({field_caption}) along {addressing}"
+    else:
+        formula = f"{label} {field_caption} along {addressing}"
+    return caption, formula
+
+
+def _worksheet_datasource(ws: ET.Element) -> tuple[str | None, str | None]:
+    """Return (datasource name, caption) from a worksheet element."""
+
+    for child in ws.iter():
+        if _local_tag(child.tag) == "datasource":
+            name = child.get("name")
+            if name and name.lower() != "parameters":
+                return name, child.get("caption")
+    return None, None
+
+
+def _parse_table_calcs(
+    root: ET.Element,
+    name_maps: dict[str, dict[str, str]],
+    datasources: list[DatasourceInfo],
+) -> tuple[list[RawCalculatedField], list[ColumnField]]:
+    """Collect worksheet ``<column-instance>/<table-calc>`` pills.
+
+    These are not datasource ``<column><calculation>`` formulas. They are listed
+    as calculated fields with a human-readable description; SQL transpile skips them.
+    """
+
+    ds_caption_by_name = {ds.name: ds.caption for ds in datasources}
+    calculated: list[RawCalculatedField] = []
+    fields: list[ColumnField] = []
+    seen: set[tuple[str, str]] = set()
+
+    for ws in root.iter():
+        if _local_tag(ws.tag) != "worksheet":
+            continue
+        sheet_name = ws.get("name") or "sheet"
+        ds_name, ds_caption_attr = _worksheet_datasource(ws)
+        if not ds_name:
+            # Fall back to first non-parameters datasource
+            for ds in datasources:
+                if (ds.name or "").lower() != "parameters":
+                    ds_name = ds.name
+                    break
+        if not ds_name:
+            ds_name = "datasource"
+        ds_caption = ds_caption_attr or ds_caption_by_name.get(ds_name) or ds_name
+        name_map = name_maps.get(ds_name, {})
+
+        for el in ws.iter():
+            if _local_tag(el.tag) != "column-instance":
+                continue
+            table_calc = None
+            for child in list(el):
+                if _local_tag(child.tag) == "table-calc":
+                    table_calc = child
+                    break
+            if table_calc is None:
+                continue
+            calc_type = table_calc.get("type")
+            if not calc_type or calc_type == "None":
+                continue
+            instance_name = el.get("name") or ""
+            column_attr = el.get("column")
+            dedupe_key = (ds_name, instance_name or f"{calc_type}:{column_attr}:{sheet_name}")
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            caption, formula = _describe_table_calc(
+                calc_type=calc_type,
+                derivation=el.get("derivation"),
+                instance_name=instance_name,
+                column_attr=column_attr,
+                name_map=name_map,
+                table_calc=table_calc,
+            )
+            raw_name = instance_name or f"[table-calc:{caption}]"
+            calculated.append(
+                RawCalculatedField(
+                    name=raw_name,
+                    caption=caption,
+                    datatype=el.get("datatype") or "real",
+                    role="measure",
+                    formula=formula,
+                    datasource_name=ds_name,
+                    datasource_caption=ds_caption,
+                    is_table_calc=True,
+                    worksheet=sheet_name,
+                )
+            )
+            fields.append(
+                ColumnField(
+                    name=raw_name,
+                    caption=caption,
+                    datatype=el.get("datatype") or "real",
+                    role="measure",
+                    hidden=False,
+                    calculated=True,
+                    formula=formula,
+                    datasource=ds_name,
+                    datasource_caption=ds_caption,
+                )
+            )
+
+    return calculated, fields
+
+
 def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
     sheets: list[WorksheetInfo] = []
     for el in root.iter():
@@ -451,6 +671,10 @@ def parse_workbook(source: Source) -> ParsedWorkbook:
         calculated.extend(fields)
         parameters.extend(params)
         all_fields.extend(columns)
+
+    table_calcs, table_calc_fields = _parse_table_calcs(root, name_maps, datasources)
+    calculated.extend(table_calcs)
+    all_fields.extend(table_calc_fields)
 
     return ParsedWorkbook(
         workbook_name=repo or workbook_name or filename,

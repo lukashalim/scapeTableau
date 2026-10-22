@@ -108,6 +108,8 @@ class WorksheetInfo(BaseModel):
     dimensions: list[str] = Field(default_factory=list)
     used_fields: list[str] = Field(default_factory=list)
     mark_class: str | None = None
+    # Shelf field -> Tableau derivation for plain aggregated pills, e.g. {"Sales": "sum"}
+    aggregations: dict[str, str] = Field(default_factory=dict)
 
 
 class MeasureNamesUsage(BaseModel):

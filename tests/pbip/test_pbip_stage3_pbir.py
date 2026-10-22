@@ -77,3 +77,19 @@ def test_hoist_compact_measure_filters() -> None:
     # Literals unchanged path
     lit = "CALCULATE(SUM(T[Sales]), T[Flag] = 1)"
     assert hoist_compact_measure_filters(lit) == lit or "VAR" not in hoist_compact_measure_filters(lit)
+
+
+def test_automatic_mark_with_one_dim_and_sum_becomes_bar_chart() -> None:
+    """Region on Rows + SUM(Sales) on Columns (Automatic mark) must not collapse to a table."""
+
+    twb = Path(__file__).parent / "fixtures" / "auto_bar.twb"
+    zip_bytes, _ = transpile_to_pbip(twb)
+    names = _names(zip_bytes)
+    visuals = [json.loads(_read(zip_bytes, n)) for n in names if n.endswith("/visual.json")]
+    sheet1 = next(v for v in visuals if v["visual"]["visualType"] == "clusteredBarChart")
+    qs = sheet1["visual"]["query"]["queryState"]
+    assert qs["Category"]["projections"][0]["field"]["Column"]["Property"] == "Region"
+    agg = qs["Y"]["projections"][0]["field"]["Aggregation"]
+    assert agg["Function"] == 0
+    assert agg["Expression"]["Column"]["Property"] == "Sales"
+    assert '"Property": "Profit"' not in json.dumps(sheet1)

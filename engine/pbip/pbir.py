@@ -105,12 +105,33 @@ def _resolve_caption(
     return None
 
 
+# Tableau derivation -> Power BI aggregation function id
+_AGG_FUNCTIONS = {"sum": 0, "avg": 1, "min": 2, "max": 3, "cnt": 4, "count": 4, "ctd": 5, "countd": 5}
+
+
+def _agg_function(ws: WorksheetInfo, caption: str) -> int | None:
+    """Power BI aggregation id for a plain aggregated shelf pill (``[sum:Sales:qk]``)."""
+
+    return _AGG_FUNCTIONS.get(ws.aggregations.get(caption, ""))
+
+
+def _measures_on_columns(ws: WorksheetInfo) -> bool:
+    """True when the aggregated pill sits on Columns (bars run horizontally)."""
+
+    return any(_agg_function(ws, c) is not None for c in ws.cols) and not any(
+        _agg_function(ws, r) is not None for r in ws.rows
+    )
+
+
 def _choose_visual_type(ws: WorksheetInfo, n_dims: int, n_meas: int) -> str:
     mark = (getattr(ws, "mark_class", None) or "").lower()
     if mark in {"pie"}:
         return "pieChart"
     if mark in {"circle"} and n_meas <= 1:
         return "card"
+    # Tableau's "Automatic" resolves to bars for categorical dimension + measure.
+    if mark in {"bar", "ganttbar", "automatic"} and n_dims == 1 and n_meas >= 1:
+        return "clusteredBarChart" if _measures_on_columns(ws) else "clusteredColumnChart"
     if mark in {"bar", "ganttbar"}:
         return "hundredPercentStackedColumnChart" if n_dims >= 2 else "tableEx"
     if mark in {"line", "area"}:
@@ -143,6 +164,30 @@ def _projection(entity: str, prop: str, *, measure: bool) -> dict:
     }
 
 
+def _aggregated_projection(entity: str, column: str, function: int) -> dict:
+    """Explicit SUM/AVG/... over a physical column (what Desktop writes for chart values)."""
+
+    return {
+        "field": {
+            "Aggregation": {
+                "Expression": {
+                    "Column": {
+                        "Expression": {"SourceRef": {"Entity": entity}},
+                        "Property": column,
+                    }
+                },
+                "Function": function,
+            }
+        },
+        "queryRef": f"{_AGG_NAMES[function]}({entity}.{column})",
+        "nativeQueryRef": f"{_AGG_LABELS[function]} of {column}",
+    }
+
+
+_AGG_NAMES = {0: "Sum", 1: "Avg", 2: "Min", 3: "Max", 4: "Count", 5: "CountNonNull"}
+_AGG_LABELS = {0: "Sum", 1: "Average", 2: "Min", 3: "Max", 4: "Count", 5: "Count (Distinct)"}
+
+
 def visual_is_data_bound(visual: dict) -> bool:
     """True when visual.json has at least one Column/Measure projection (not a textbox)."""
 
@@ -166,8 +211,10 @@ def _build_visual_json(
     x: int,
     y: int,
     z: int,
+    agg_columns: dict[str, int] | None = None,
 ) -> dict:
     name = _visual_id()
+    agg_columns = agg_columns or {}
     schema = (
         "https://developer.microsoft.com/json-schemas/fabric/item/report/"
         "definition/visualContainer/2.9.0/schema.json"
@@ -177,6 +224,9 @@ def _build_visual_json(
         query_state = {
             "Values": {"projections": [_projection(entity, measures[0], measure=True)]}
         }
+    elif visual_type == "card" and agg_columns:
+        col, fn = next(iter(agg_columns.items()))
+        query_state = {"Values": {"projections": [_aggregated_projection(entity, col, fn)]}}
     elif visual_type in {"pieChart", "donutChart"}:
         query_state = {
             "Category": {
@@ -185,6 +235,20 @@ def _build_visual_json(
             "Y": {
                 "projections": [_projection(entity, measures[0], measure=True)] if measures else []
             },
+        }
+    elif visual_type in {"clusteredBarChart", "clusteredColumnChart"}:
+        y_projs = [_projection(entity, m, measure=True) for m in measures[:3]]
+        y_projs += [
+            _aggregated_projection(entity, col, fn) for col, fn in list(agg_columns.items())[:3]
+        ]
+        query_state = {
+            "Category": {
+                "projections": [_projection(entity, dims[0], measure=False)] if dims else []
+            },
+            "Series": {
+                "projections": [_projection(entity, dims[1], measure=False)] if len(dims) > 1 else []
+            },
+            "Y": {"projections": y_projs},
         }
     elif visual_type == "hundredPercentStackedColumnChart":
         query_state = {
@@ -411,6 +475,7 @@ def build_pbir_files(
         model_columns, model_measures = _model_fields(result, entity, table_name_by_ds)
         dims: list[str] = []
         measures: list[str] = []
+        agg_columns: dict[str, int] = {}
         for raw in list(ws.rows) + list(ws.cols) + list(ws.used_fields) + list(ws.dimensions):
             resolved = _resolve_caption(
                 raw, result.calculated_fields, model_columns, model_measures
@@ -418,25 +483,37 @@ def build_pbir_files(
             if resolved is None:
                 continue
             cap, is_meas = resolved
+            agg_fn = None if is_meas else _agg_function(ws, cap)
             if is_meas:
                 if cap not in measures:
                     measures.append(cap)
+            elif agg_fn is not None:
+                # SUM([Sales]) on a shelf: a physical column used as an aggregated value
+                agg_columns.setdefault(cap, agg_fn)
             else:
                 if cap not in dims and cap not in measures:
                     dims.append(cap)
         # If shelves empty after filtering, bind first real columns / measures
-        if not dims and not measures:
+        if not dims and not measures and not agg_columns:
             dims = sorted(model_columns)[:3]
             measures = sorted(model_measures)[:2]
-        if not dims and not measures:
+        if not dims and not measures and not agg_columns:
             dims, measures = _any_model_fields(result)
-        vtype = _choose_visual_type(ws, len(dims), len(measures))
-        # Row-level numbers the extract actually has. A table of only % of Total
-        # measures shows headers and blank cells when those columns are empty.
+        vtype = _choose_visual_type(ws, len(dims), len(measures) + len(agg_columns))
+        if agg_columns and vtype not in {"clusteredBarChart", "clusteredColumnChart", "card"}:
+            vtype = "tableEx"  # only these builders bind aggregated columns
         if vtype == "tableEx":
-            for extra in ("Sales", "Profit"):
-                if extra in model_columns and extra not in dims and extra not in measures:
-                    dims.append(extra)
+            # Aggregated physical columns have no chart well here; show them as columns.
+            for col in agg_columns:
+                if col not in dims:
+                    dims.append(col)
+            # Row-level numbers the extract actually has. A table of only % of Total
+            # measures shows headers and blank cells when those columns are empty.
+            # Skipped when the sheet already names its own numeric column.
+            if not agg_columns:
+                for extra in ("Sales", "Profit"):
+                    if extra in model_columns and extra not in dims and extra not in measures:
+                        dims.append(extra)
         visual = _build_visual_json(
             visual_type=vtype,
             entity=entity,
@@ -445,6 +522,7 @@ def build_pbir_files(
             x=40,
             y=40,
             z=1000,
+            agg_columns=agg_columns if vtype != "tableEx" else None,
         )
         if not visual_is_data_bound(visual):
             fb_dims, fb_meas = _any_model_fields(result)

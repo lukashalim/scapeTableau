@@ -169,6 +169,19 @@ def _headers_for_ds(ds: DatasourceInfo) -> list[str]:
     return out
 
 
+def _references_hyper(ds: DatasourceInfo) -> bool:
+    """True when this datasource's rows live in a Hyper extract, not a text file."""
+
+    for conn in ds.connections:
+        kind = (conn.class_name or "").lower()
+        refs = " ".join(
+            str(part or "") for part in (conn.dbname, conn.filename)
+        ).lower()
+        if kind == "hyper" or ".hyper" in refs:
+            return True
+    return False
+
+
 def _hyper_paths_for_ds(ds: DatasourceInfo) -> list[str]:
     out: list[str] = []
     for conn in ds.connections:
@@ -235,7 +248,6 @@ def _load_companion_orders(source: Source | None) -> bytes | None:
         return None
     companion = path.with_suffix(".twbx")
     # Calc fixture only: samples/superstore_calcs.twb next to its .twbx.
-    # The public site sample is US_Superstore_10.0.twbx and does not use this path.
     candidates = [companion]
     repo_sample = Path(__file__).resolve().parents[2] / "samples" / "superstore_calcs.twbx"
     if path.stem.lower() == "superstore_calcs":
@@ -467,7 +479,20 @@ def collect_data_csvs(
             headers_by_table[table_name] = used_headers
             continue
 
-        # 4) Demo seed for known Sample Superstore-style schemas (website .twb)
+        # Hyper extracts are not the demo fixture. Leave headers until tableauhyperapi
+        # can read the .hyper file (local only). Do not invent Superstore rows.
+        if _references_hyper(ds):
+            if not used_headers:
+                used_headers = headers or ["Column1"]
+            out[zip_path] = _rows_to_csv_bytes(used_headers, [])
+            headers_by_table[table_name] = used_headers
+            notes.append(
+                f"Data/{csv_name}: header-only. '{table_name}' is a Hyper extract; "
+                "row data loads only where tableauhyperapi is installed."
+            )
+            continue
+
+        # 4) Demo seed for the synthetic calc fixture when it has no packaged CSV
         if not used_headers:
             used_headers = headers or ["Column1"]
             if used_headers == ["Column1"]:

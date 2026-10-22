@@ -450,15 +450,15 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
   const trySample = useCallback(async () => {
     setState("loading");
     setError(null);
-    // Tableau Desktop 2023.1 sample (Hyper extracts). Not the synthetic superstore_calcs fixture.
-    setFileName("US_Superstore_10.0.twbx");
+    // Tableau Desktop 2023.1 workbook, unpacked. The .twbx package stays off the sample button.
+    setFileName("US_Superstore_10.0.twb");
     try {
-      const response = await fetch("/samples/US_Superstore_10.0.twbx");
+      const response = await fetch("/samples/US_Superstore_10.0.twb");
       if (!response.ok) {
         throw new Error("Sample workbook is missing from the web public folder.");
       }
       const blob = await response.blob();
-      const file = new File([blob], "US_Superstore_10.0.twbx", {
+      const file = new File([blob], "US_Superstore_10.0.twb", {
         type: "application/octet-stream",
       });
       await runFile(file);
@@ -565,7 +565,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
       <Card className="ring-foreground/15">
         <CardHeader>
           <CardTitle>Workbook</CardTitle>
-          <CardDescription>Accepts Tableau Desktop workbooks. The sample is Tableau Superstore 10.0.</CardDescription>
+          <CardDescription>Accepts Tableau Desktop workbooks. The sample is the Tableau Superstore 10.0 .twb.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <label

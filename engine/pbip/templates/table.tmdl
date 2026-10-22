@@ -1,8 +1,6 @@
 table '${TABLE_NAME}'
 	lineageTag: ${TABLE_LINEAGE}
 
-${COLUMNS}
-${CALC_COLUMNS}
-${PARTITION}
+${SECTIONS}
 
 	annotation PBI_ResultType = Table

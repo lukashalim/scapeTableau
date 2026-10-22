@@ -170,6 +170,23 @@ def test_empty_expressions_tmdl_is_truly_empty() -> None:
     assert expr == "", repr(expr)
 
 
+def test_measures_tmdl_has_no_consecutive_blank_lines() -> None:
+    """Desktop rejects Empty! on a blank line inside __Measures (line 5 of the stub)."""
+    zip_bytes, _ = transpile_to_pbip(FIXTURES / "join_demo.twb")
+    path = next(n for n in _zip_names(zip_bytes) if n.endswith("__Measures.tmdl"))
+    text = _read(zip_bytes, path)
+    assert "no measures" not in text
+    for name in _zip_names(zip_bytes):
+        if not name.endswith(".tmdl"):
+            continue
+        lines = _read(zip_bytes, name).splitlines()
+        for index in range(1, len(lines)):
+            assert lines[index].strip() or lines[index - 1].strip(), (
+                name,
+                index + 1,
+            )
+
+
 @pytest.mark.skipif(not SUPERSTORE.is_file(), reason="US_Superstore_10.0.twbx missing")
 def test_superstore_pbip_golden_shape() -> None:
     zip_bytes, result = transpile_to_pbip(SUPERSTORE)

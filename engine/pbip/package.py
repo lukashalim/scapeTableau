@@ -590,14 +590,17 @@ def build_pbip_files(
             )
 
         partition = _partition_block(table_name, plan.expression)
+        sections = [part for part in (
+            column_tmdl,
+            "\n\n".join(calc_blocks) if calc_blocks else "",
+            partition,
+        ) if part]
         table_body = render_template(
             "table.tmdl",
             {
                 "TABLE_NAME": table_name.replace("'", "''"),
                 "TABLE_LINEAGE": _lineage(),
-                "COLUMNS": column_tmdl + ("\n" if column_tmdl else ""),
-                "CALC_COLUMNS": ("\n\n".join(calc_blocks) + "\n") if calc_blocks else "",
-                "PARTITION": partition,
+                "SECTIONS": "\n\n".join(sections),
             },
         )
         safe_file = _SAFE_NAME.sub("_", table_name) or "Table"
@@ -617,7 +620,7 @@ def build_pbip_files(
         {
             "TABLE_LINEAGE": _lineage(),
             "DUMMY_LINEAGE": _lineage(),
-            "MEASURES": ("\n\n".join(measure_blocks) + "\n") if measure_blocks else "\t/// (no measures)\n",
+            "MEASURES": ("\n\n".join(measure_blocks) + "\n\n") if measure_blocks else "",
         },
     )
     files[f"{sm_folder}/definition/tables/__Measures.tmdl"] = measures_tmdl

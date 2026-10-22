@@ -1,9 +1,7 @@
 table __Measures
 	lineageTag: ${TABLE_LINEAGE}
 
-${MEASURES}
-
-	column Dummy
+${MEASURES}	column Dummy
 		dataType: int64
 		isHidden
 		lineageTag: ${DUMMY_LINEAGE}

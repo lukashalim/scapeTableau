@@ -273,7 +273,7 @@ export const LANDING_PAGES: LandingPage[] = [
       "Same upload fills SQL and DAX so you can compare warehouse views with Power BI measures.",
     ],
     limitations: [
-      "FIXED / INCLUDE / EXCLUDE LOD expressions are DAX TODO comments, not CALCULATE/ALLEXCEPT rewrites.",
+      "FIXED LOD maps to CALCULATE + ALLEXCEPT / ALL; INCLUDE/EXCLUDE need worksheet grain; nested LOD is skipped. Download the .pbip zip (default) for Desktop.",
       "No PBIX, PBIT, or Power Query M export. Use the desktop converter for Hyper → Excel.",
     ],
     faqs: [

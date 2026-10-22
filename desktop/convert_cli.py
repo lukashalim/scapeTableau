@@ -26,7 +26,7 @@ from engine.schema import ParseStatus, WorkbookParseError
 
 CONVERT_ALLOWED = {".hyper", ".twbx", ".tdsx", ".twb"}
 TRANSPILE_ALLOWED = {".twb", ".twbx", ".tdsx", ".hyper"}
-DIALECTS = ("ansi", "snowflake", "postgres", "duckdb", "tsql")
+DIALECTS = ("ansi", "snowflake", "postgres", "duckdb", "bigquery", "tsql")
 
 
 def _emit(payload: dict) -> None:
@@ -70,6 +70,34 @@ def cmd_convert(source: Path, dest: Path) -> int:
             "sheets": list(inventory.converted_sheets),
             "notes": list(inventory.notes),
             "hyper_files": len(inventory.hyper_files),
+        }
+    )
+    return 0
+
+
+def cmd_pbip(source: Path, dest: Path) -> int:
+    from engine.pbip import transpile_to_pbip
+
+    if not source.is_file():
+        _emit({"ok": False, "error": f"File not found: {source}"})
+        return 1
+    try:
+        zip_bytes, result = transpile_to_pbip(source)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(zip_bytes)
+    except WorkbookParseError as exc:
+        _emit({"ok": False, "error": str(exc)})
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        _emit({"ok": False, "error": str(exc), "traceback": traceback.format_exc()})
+        return 1
+    _emit(
+        {
+            "ok": True,
+            "output": str(dest),
+            "workbook": result.workbook_name,
+            "field_count": len(result.calculated_fields),
+            "format": "pbip",
         }
     )
     return 0
@@ -140,11 +168,17 @@ def main(argv: list[str] | None = None) -> int:
         help="SQL dialect (default: ansi)",
     )
 
+    p_pbip = sub.add_parser("pbip", help="Emit Power BI Project (.pbip) zip")
+    p_pbip.add_argument("input", type=Path)
+    p_pbip.add_argument("output", type=Path)
+
     args = parser.parse_args(argv)
     if args.command == "convert":
         return cmd_convert(args.input, args.output)
     if args.command == "transpile":
         return cmd_transpile(args.input, args.dialect)
+    if args.command == "pbip":
+        return cmd_pbip(args.input, args.output)
     _emit({"ok": False, "error": f"Unknown command: {args.command}"})
     return 1
 

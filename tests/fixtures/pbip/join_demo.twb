@@ -1,0 +1,40 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<workbook source-build='join-demo'>
+  <datasources>
+    <datasource caption='Orders' name='federated.orders' inline='true'>
+      <connection class='federated'>
+        <named-connection caption='Orders' name='textscan.orders'>
+          <connection class='textscan' directory='' filename='Orders.csv' password='' server='' />
+        </named-connection>
+        <named-connection caption='Returns' name='textscan.returns'>
+          <connection class='textscan' directory='' filename='Returns.csv' password='' server='' />
+        </named-connection>
+        <relation name='Join1' type='join' join='left'>
+          <clause type='join'>
+            <expression op='='>
+              <expression op='[Orders].[Order ID]' />
+              <expression op='[Returns].[Order ID]' />
+            </expression>
+          </clause>
+          <relation connection='textscan.orders' name='Orders' table='[Orders.csv]' type='table' />
+          <relation connection='textscan.returns' name='Returns' table='[Returns.csv]' type='table' />
+        </relation>
+      </connection>
+      <column caption='Order ID' datatype='string' name='[Order ID]' role='dimension' type='nominal' />
+      <column caption='Sales' datatype='real' name='[Sales]' role='measure' type='quantitative' />
+      <column caption='Profit Ratio' datatype='real' name='[Calculation_1]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='SUM([Sales]) / SUM([Sales])' />
+      </column>
+    </datasource>
+  </datasources>
+  <worksheets>
+    <worksheet name='Sheet 1'>
+      <table>
+        <view>
+          <datasource-dependencies datasource='federated.orders' />
+          <aggregation column='[federated.orders].[Order ID]' />
+        </view>
+      </table>
+    </worksheet>
+  </worksheets>
+</workbook>

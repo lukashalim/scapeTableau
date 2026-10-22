@@ -20,18 +20,18 @@ EXPECTED_PCT = {"East": 0.19, "Central": 0.24, "West": 0.24, "South": 0.33}
 NESTED_CAPTIONS = {"Nested Avg Customer", "Nested Min Category"}
 
 EXPECTED_DAX = {
-    "Pct of Total": "DIVIDE(SUM(Orders[Sales]), CALCULATE(SUM(Orders[Sales]), ALL(Orders)))",
+    "Pct of Total": "DIVIDE(SUM('Orders'[Sales]), CALCULATE(SUM('Orders'[Sales]), ALL('Orders')))",
     "Exclude Sub-Category Sales": (
-        "CALCULATE(SUM(Orders[Sales]), REMOVEFILTERS(Orders[Sub-Category]))"
+        "CALCULATE(SUM('Orders'[Sales]), REMOVEFILTERS('Orders'[Sub-Category]))"
     ),
-    "C01": "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Region]))",
-    "C11": "CALCULATE(SUM(Orders[Sales]), ALL(Orders))",
+    "C01": "CALCULATE(SUM('Orders'[Sales]), ALLEXCEPT('Orders', 'Orders'[Region]))",
+    "C11": "CALCULATE(SUM('Orders'[Sales]), ALL('Orders'))",
     "First Purchase Date": (
-        "CALCULATE(MIN(Orders[Order Date]), ALLEXCEPT(Orders, Orders[Customer Name]))"
+        "CALCULATE(MIN('Orders'[Order Date]), ALLEXCEPT('Orders', 'Orders'[Customer Name]))"
     ),
-    "Sales Mix": "DIVIDE(Orders[Sales], (DIVIDE([C01], [C11])))",
-    "Next Month": "EDATE(Orders[Order Date], 1)",
-    "Scaled Sales": "Orders[Sales] * [Multiplier Value]",
+    "Sales Mix": "DIVIDE('Orders'[Sales], (DIVIDE([C01], [C11])))",
+    "Next Month": "EDATE('Orders'[Order Date], 1)",
+    "Scaled Sales": "'Orders'[Sales] * [Multiplier Value]",
 }
 
 EXPECTED_KIND = {
@@ -46,7 +46,7 @@ EXPECTED_KIND = {
     "Nested Min Category": "measure",
     "First Purchase Date": "calculated_column",
     "Days Since First Purchase": "calculated_column",
-    "Sales Mix": "calculated_column",
+    "Sales Mix": "measure",
     "Scaled Sales": "calculated_column",
     "Next Month": "calculated_column",
 }
@@ -76,7 +76,7 @@ def test_lod14_fourteen_calcs() -> None:
         assert "-- TODO" not in (field.sql or "")
     assert "[Multiplier Value] := 2" in result.dax_script
     assert "[Pct of Total] :=" in result.dax_script
-    assert "Orders[First Purchase Date] =" in result.dax_script
+    assert "'Orders'[First Purchase Date] =" in result.dax_script
     assert "/* [Parameters]" not in result.dax_script
 
 
@@ -85,7 +85,7 @@ def test_lod14_dax_exact() -> None:
     for caption, expected in EXPECTED_DAX.items():
         assert fields[caption].dax == expected, f"{caption}\n{fields[caption].dax!r}\n!=\n{expected!r}"
     assert "MAXX" not in fields["Pct of Total"].dax
-    assert "REMOVEFILTERS(Orders[Sub-Category])" in fields["Exclude Sub-Category Sales"].dax
+    assert "REMOVEFILTERS('Orders'[Sub-Category])" in fields["Exclude Sub-Category Sales"].dax
     for caption in NESTED_CAPTIONS:
         assert fields[caption].status == ParseStatus.skipped
 
@@ -129,7 +129,7 @@ def test_nested_min_category_duckdb_values() -> None:
 def test_exclude_and_fixed_none_dax_formula() -> None:
     dax, status, err = transpile_formula("MAX({FIXED : SUM([Sales])})", target="dax")
     assert status == ParseStatus.ok, err
-    assert dax == "CALCULATE(SUM(Orders[Sales]), ALL(Orders))"
+    assert dax == "CALCULATE(SUM('Orders'[Sales]), ALL('Orders'))"
     nested, nst, nerr = transpile_formula(
         "{FIXED [Region]: AVG({FIXED [Customer Name]: SUM([Sales])})}",
         target="dax",
@@ -139,6 +139,7 @@ def test_exclude_and_fixed_none_dax_formula() -> None:
     exc, est, eerr = transpile_formula(
         "SUM({EXCLUDE [Sub-Category]: SUM([Sales])})",
         target="dax",
+        context=FormulaContext(view_dims=["Region", "Sub-Category"]),
     )
     assert est == ParseStatus.ok, eerr
     assert exc == EXPECTED_DAX["Exclude Sub-Category Sales"]

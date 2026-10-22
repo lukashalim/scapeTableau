@@ -50,6 +50,16 @@ const Editor = dynamic(() => import("@monaco-editor/react"), {
 
 type UiState = "empty" | "loading" | "error" | "success";
 type FieldFilter = "all" | "active" | "hidden";
+type SqlDialect = "ansi" | "snowflake" | "postgres" | "duckdb" | "bigquery" | "tsql";
+
+const SQL_DIALECTS: { value: SqlDialect; label: string }[] = [
+  { value: "ansi", label: "ANSI" },
+  { value: "snowflake", label: "Snowflake" },
+  { value: "bigquery", label: "BigQuery" },
+  { value: "tsql", label: "SQL Server" },
+  { value: "postgres", label: "Postgres" },
+  { value: "duckdb", label: "DuckDB" },
+];
 
 function statusVariant(status: CalculatedField["status"]): "default" | "secondary" | "destructive" | "outline" {
   if (status === "ok") return "default";
@@ -378,6 +388,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedDax, setCopiedDax] = useState(false);
+  const [dialect, setDialect] = useState<SqlDialect>("ansi");
 
   const filtered = useMemo(() => {
     if (!result) return [];
@@ -391,7 +402,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     );
   }, [query, result]);
 
-  const runFile = useCallback(async (file: File) => {
+  const runFile = useCallback(async (file: File, nextDialect: SqlDialect = dialect) => {
     setState("loading");
     setError(null);
     setFileName(file.name);
@@ -400,6 +411,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     setHeldFile(file);
     const body = new FormData();
     body.append("file", file, file.name);
+    body.append("dialect", nextDialect);
     try {
       const response = await fetch("/api/transpile", { method: "POST", body });
       const data: unknown = await response.json();
@@ -418,7 +430,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
       setError(err instanceof Error ? err.message : "Network error.");
       setState("error");
     }
-  }, []);
+  }, [dialect]);
 
   const onFiles = useCallback(
     (files: FileList | null) => {
@@ -438,14 +450,17 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
   const trySample = useCallback(async () => {
     setState("loading");
     setError(null);
-    setFileName("superstore_calcs.twb");
+    // Tableau Desktop 2023.1 workbook, unpacked. The .twbx package stays off the sample button.
+    setFileName("US_Superstore_10.0.twb");
     try {
-      const response = await fetch("/samples/superstore_calcs.twb");
+      const response = await fetch("/samples/US_Superstore_10.0.twb");
       if (!response.ok) {
         throw new Error("Sample workbook is missing from the web public folder.");
       }
       const blob = await response.blob();
-      const file = new File([blob], "superstore_calcs.twb", { type: "application/xml" });
+      const file = new File([blob], "US_Superstore_10.0.twb", {
+        type: "application/octet-stream",
+      });
       await runFile(file);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load the sample workbook.");
@@ -480,6 +495,53 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     URL.revokeObjectURL(url);
   }, [result]);
 
+  const downloadPbip = useCallback(async () => {
+    if (!heldFile) {
+      toast.error("Re-drop the workbook to download the Power BI project.");
+      return;
+    }
+    try {
+      const body = new FormData();
+      body.append("file", heldFile, heldFile.name);
+      body.append("dialect", dialect);
+      const response = await fetch("/api/pbip", { method: "POST", body });
+      if (!response.ok) {
+        const raw = await response.text();
+        let message = `PBIP export failed (HTTP ${response.status})`;
+        try {
+          const data: unknown = JSON.parse(raw);
+          if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+            message = data.error;
+          }
+        } catch {
+          const stripped = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+          if (stripped) message = stripped;
+        }
+        const truncated = message.slice(0, 280);
+        console.error("[pbip download]", response.status, truncated);
+        toast.error(truncated);
+        return;
+      }
+      const blob = await response.blob();
+      if (blob.size < 4) {
+        toast.error("PBIP export returned an empty file.");
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const base = (fileName || heldFile.name).replace(/\.(twbx?)$/i, "");
+      a.download = `${base || "escapetableau"}.pbip.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Downloaded Power BI project (.pbip.zip) — unzip and open the .pbip in Desktop");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "PBIP download failed.";
+      console.error("[pbip download]", message);
+      toast.error(message.slice(0, 280));
+    }
+  }, [heldFile, fileName, dialect]);
+
   const okCount = result?.calculated_fields.filter((f) => f.status === "ok").length ?? 0;
 
   return (
@@ -503,7 +565,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
       <Card className="ring-foreground/15">
         <CardHeader>
           <CardTitle>Workbook</CardTitle>
-          <CardDescription>Accepts Tableau Desktop workbooks. Try the synthetic Superstore sample offline.</CardDescription>
+          <CardDescription>Accepts Tableau Desktop workbooks. The sample is the Tableau Superstore 10.0 .twb.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <label
@@ -635,10 +697,32 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="sql" className="mt-3 space-y-2">
-                  <div className="flex justify-end">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      Dialect
+                      <select
+                        className="rounded-md border bg-background px-2 py-1 text-foreground"
+                        value={dialect}
+                        onChange={(e) => {
+                          const next = e.target.value as SqlDialect;
+                          setDialect(next);
+                          if (heldFile) void runFile(heldFile, next);
+                        }}
+                      >
+                        {SQL_DIALECTS.map((d) => (
+                          <option key={d.value} value={d.value}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Button size="sm" onClick={() => void downloadPbip()}>
+                      <Download data-icon="inline-start" />
+                      Download .pbip
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => void copySql()}>
                       {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                      {copied ? "Copied" : "Copy"}
+                      {copied ? "Copied" : "Copy SQL"}
                     </Button>
                   </div>
                   <div className="overflow-hidden rounded-xl border">

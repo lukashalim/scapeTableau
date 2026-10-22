@@ -46,6 +46,16 @@ class RelationInfo(BaseModel):
     custom_sql: str | None = None
 
 
+class JoinInfo(BaseModel):
+    """Tableau join clause mapped to a Power BI many-to-one relationship."""
+
+    left_datasource: str
+    right_datasource: str
+    left_column: str
+    right_column: str
+    join_type: str | None = None  # inner | left | right | full
+
+
 class ColumnField(BaseModel):
     name: str
     caption: str
@@ -97,6 +107,9 @@ class WorksheetInfo(BaseModel):
     cols: list[str] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
     used_fields: list[str] = Field(default_factory=list)
+    mark_class: str | None = None
+    # Shelf field -> Tableau derivation for plain aggregated pills, e.g. {"Sales": "sum"}
+    aggregations: dict[str, str] = Field(default_factory=dict)
 
 
 class MeasureNamesUsage(BaseModel):
@@ -176,6 +189,7 @@ class CalculatedField(BaseModel):
     dax_status: ParseStatus | None = None
     dax_kind: str | None = None
     sql_kind: str | None = None  # "row" | "aggregate" when status is ok
+    dax_notes: list[str] = Field(default_factory=list)  # missing-column TODOs, etc.
 
     @property
     def raw_formula(self) -> str:
@@ -202,6 +216,8 @@ class TranspileResult(BaseModel):
     target: str = "sql"
     measure_names: list[MeasureNamesUsage] = Field(default_factory=list)
     conversion_summary: str = ""
+    joins: list[JoinInfo] = Field(default_factory=list)
+    worksheets: list[WorksheetInfo] = Field(default_factory=list)
 
     def model_dump_json_result(self) -> str:
         return self.model_dump_json(indent=2)
@@ -217,9 +233,10 @@ class RawCalculatedField(BaseModel):
     formula: str
     datasource_name: str
     datasource_caption: str | None = None
-    # Worksheet <table-calc> pills (percent of total, etc.) — listed, not SQL-translated.
+    # Worksheet <table-calc> pills (percent of total, etc.) — listed; Stage 2 emits DAX.
     is_table_calc: bool = False
     worksheet: str | None = None
+    table_calc_type: str | None = None
 
 
 class ParsedWorkbook(BaseModel):
@@ -234,3 +251,4 @@ class ParsedWorkbook(BaseModel):
     fields: list[ColumnField] = Field(default_factory=list)
     worksheets: list[WorksheetInfo] = Field(default_factory=list)
     measure_names: list[MeasureNamesUsage] = Field(default_factory=list)
+    joins: list[JoinInfo] = Field(default_factory=list)

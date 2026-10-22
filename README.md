@@ -140,8 +140,11 @@ CLI Options for `process`:
 - `--output-dir` / `-o`: Directory to save extracted `.sql`, `.md`, and `.json` artifacts.
 - `--format` / `-f`: Choose output format (`sql`, `markdown`, `json`, `dax`, `dbt`, `all`). Default: `all`.
 - `--target`: `sql` (default) or `dax` for status emphasis. JSON always includes both `sql` and `dax`.
-- `--dialect`: `ansi` | `snowflake` | `postgres` | `duckdb` | `dax`.
+- `--dialect`: `ansi` | `snowflake` | `postgres` | `duckdb` | `bigquery` | `tsql` | `dax`. BigQuery rewrites the view script via [sqlglot](https://github.com/tobymao/sqlglot); Snowflake/T-SQL stay engine-native.
 - `--print-summary`: Displays a clean terminal table of all extracted fields.
+- `python cli.py pbip workbook.twbx -o out.pbip.zip`: Power BI Project zip (TMDL + PBIR Stage 1–3).
+
+Third-party PBIP/SQL libraries (sqlglot, DuckDB tests, microsoft/json-schemas, TE2, etc.): see [docs/third-party-pbip.md](docs/third-party-pbip.md).
 
 ### 3. Streamlit Offline GUI
 
@@ -166,7 +169,7 @@ npm run dev
 Open http://localhost:4317 in the browser.
 
 - Drag-and-drop target for `.twb` and `.twbx` files.
-- "Try with Sample Workbook" button (inspect + layout; the sample `.twb` has no packaged CSV — use `samples/superstore_calcs.twbx` to exercise Excel extract).
+- "Try with Sample Workbook" button loads `web/public/samples/US_Superstore_10.0.twb` (the Tableau Desktop 2023.1 Superstore workbook, not the `.twbx` package). `samples/US_Superstore_10.0.twbx` stays in the repo for tests. The synthetic `samples/superstore_calcs` fixture stays for unit tests only.
 - Workspace tabs after a successful upload:
   - **Transpile to SQL/dbt** — SQL / DAX / Audit / Markdown
   - **Extract Data** — archive inventory, custom SQL, Hyper index, Download `.xlsx`

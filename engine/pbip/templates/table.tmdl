@@ -1,0 +1,6 @@
+table '${TABLE_NAME}'
+	lineageTag: ${TABLE_LINEAGE}
+
+${SECTIONS}
+
+	annotation PBI_ResultType = Table

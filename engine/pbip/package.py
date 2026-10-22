@@ -367,7 +367,8 @@ def _expression_blocks(
                 f'expression {pname} = "{text}" meta [IsParameterQuery=true, Type="Text"]'
             )
     if not chunks:
-        return "/// No shared expressions\n"
+        # Desktop rejects a comment plus a blank line here (InvalidLineType Empty! at line 2).
+        return ""
     return "\n\n".join(chunks) + "\n"
 
 
@@ -645,13 +646,13 @@ def build_pbip_files(
             "`Data` folder next to the `.pbip`. Large tables were not embedded; "
             "M partitions load `DataFolder & \"\\\\<table>.csv\"`."
         )
-    files[f"{sm_folder}/definition/expressions.tmdl"] = render_template(
-        "expressions.tmdl",
-        {
-            "EXPRESSION_BLOCKS": _expression_blocks(
-                all_params, parameters, include_datafolder=needs_datafolder
-            )
-        },
+    expression_blocks = _expression_blocks(
+        all_params, parameters, include_datafolder=needs_datafolder
+    ).strip()
+    # The template file ends with a newline. Appending that to an empty or
+    # already-terminated block makes line 2 (or the last line) an empty TMDL line.
+    files[f"{sm_folder}/definition/expressions.tmdl"] = (
+        f"{expression_blocks}\n" if expression_blocks else ""
     )
     files[f"{sm_folder}/definition.pbism"] = render_json_template("definition.pbism.json", {})
     files[f"{sm_folder}/.platform"] = _platform_json(item_type="SemanticModel", display_name=name)

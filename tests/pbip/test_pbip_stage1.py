@@ -162,6 +162,14 @@ def test_empty_relationships_tmdl_is_truly_empty() -> None:
     assert rel == "", repr(rel)
 
 
+def test_empty_expressions_tmdl_is_truly_empty() -> None:
+    """Desktop rejects expressions.tmdl with a comment and a blank line 2."""
+    zip_bytes, _ = transpile_to_pbip(FIXTURES / "join_demo.twb")
+    expr_path = next(n for n in _zip_names(zip_bytes) if n.endswith("expressions.tmdl"))
+    expr = _read(zip_bytes, expr_path)
+    assert expr == "", repr(expr)
+
+
 @pytest.mark.skipif(not SUPERSTORE.is_file(), reason="US_Superstore_10.0.twbx missing")
 def test_superstore_pbip_golden_shape() -> None:
     zip_bytes, result = transpile_to_pbip(SUPERSTORE)

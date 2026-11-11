@@ -26,3 +26,13 @@ License: MIT (see `./LICENSE`)
 BIEscape keeps its own AST parser (`engine/parser.py`) and formula transpiler
 (`engine/transpiler.py`). Vendored files are **pattern templates** filled by
 `engine/pbip/`.
+
+## Patterns adopted from Franssens' worked examples (examples/superstore-sales-performance)
+
+- PBIR shapes for lineChart / scatterChart wells, textbox (paragraphs + textRuns), shape (rectangle fill), pageNavigator
+- Guidance that actionButton renders blank in Desktop (use shape), and that filledMap/map are deprecated in favor of azureMap
+- visualContainer schema 2.9.0 (newest version that resolves)
+
+## Ideas adopted from ionutsd/twbx_to_pbip (MIT, https://github.com/ionutsd/twbx_to_pbip)
+
+No code was copied. We adopted the approach of choosing a visual from the mark class plus shelf contents (date axis -> line, dimension+measure -> bar/column, two measures -> scatter), mapping dashboard zones linearly onto a page, and recording each inference in a conversion report.

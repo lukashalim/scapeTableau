@@ -4,6 +4,7 @@
 Usage:
   python desktop/convert_cli.py convert INPUT OUTPUT.xlsx
   python desktop/convert_cli.py transpile INPUT --dialect ansi
+  python desktop/convert_cli.py pbip INPUT OUTPUT_DIR
 
 Prints one JSON line to stdout and exits 0 on success, 1 on failure.
 """
@@ -75,16 +76,49 @@ def cmd_convert(source: Path, dest: Path) -> int:
     return 0
 
 
+PBIP_ALLOWED = {".twb", ".twbx", ".tdsx"}
+
+
 def cmd_pbip(source: Path, dest: Path) -> int:
-    from engine.pbip import transpile_to_pbip
+    """Write a Power BI project.
+
+    A ``.zip`` destination keeps the downloadable archive. Any other path is a
+    folder containing ``Name.pbip`` plus the Report, SemanticModel, and Data
+    siblings, ready to open in Power BI Desktop.
+    """
+
+    from engine import transpile
+    from engine.pbip import transpile_to_pbip, write_pbip_dir
 
     if not source.is_file():
         _emit({"ok": False, "error": f"File not found: {source}"})
         return 1
+    if source.suffix.lower() not in PBIP_ALLOWED:
+        _emit(
+            {
+                "ok": False,
+                "error": "Power BI projects need a .twb, .twbx, or .tdsx workbook.",
+            }
+        )
+        return 1
     try:
-        zip_bytes, result = transpile_to_pbip(source)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(zip_bytes)
+        if dest.suffix.lower() == ".zip":
+            zip_bytes, result = transpile_to_pbip(source)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(zip_bytes)
+            output = str(dest)
+            notes: list[str] = []
+        else:
+            result = transpile(source, dialect="ansi", target="sql")
+            report = write_pbip_dir(
+                result,
+                dest,
+                source_stem=source.stem,
+                source=source,
+            )
+            pbips = sorted(p for p in dest.glob("*.pbip") if p.is_file())
+            output = str(pbips[0] if pbips else dest)
+            notes = list(report.hyper_todos)[:4]
     except WorkbookParseError as exc:
         _emit({"ok": False, "error": str(exc)})
         return 1
@@ -94,10 +128,11 @@ def cmd_pbip(source: Path, dest: Path) -> int:
     _emit(
         {
             "ok": True,
-            "output": str(dest),
+            "output": output,
             "workbook": result.workbook_name,
             "field_count": len(result.calculated_fields),
             "format": "pbip",
+            "notes": notes,
         }
     )
     return 0

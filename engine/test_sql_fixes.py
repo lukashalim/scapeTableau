@@ -67,10 +67,12 @@ def test_superstore_null_and_float_literals(superstore_ansi) -> None:
     assert sales_2013.sql.endswith("ELSE NULL END") or " ELSE NULL END" in sales_2013.sql
     assert '"NULL"' not in sales_2013.sql
 
-    rate = next(f for f in superstore_ansi.calculated_fields if f.caption == "Commission Rate")
-    assert rate.sql == "18.4"
-    growth = next(f for f in superstore_ansi.calculated_fields if f.caption == "New Business Growth")
-    assert growth.sql == "0.6"
+    # Parameters are no longer duplicated as calculated fields; they are inlined as clean literals.
+    variable = next(
+        f for f in superstore_ansi.calculated_fields if f.caption == "Commission (Variable)"
+    )
+    assert variable.sql.startswith("(18.4 *")
+    assert "0.6" in superstore_ansi.sql_script
     assert "18.400000000000002" not in superstore_ansi.sql_script
     assert "0.59999999999999998" not in superstore_ansi.sql_script
 

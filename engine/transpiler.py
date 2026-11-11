@@ -50,6 +50,8 @@ ROW_FUNCS = {
     "ISNULL",
     "IIF",
 }
+# 'Table'[Column] or Table[Column]: the only argument shape DAX SUM/AVERAGE/... accept
+_BARE_DAX_COLUMN = re.compile(r"^(?:'(?:[^']|'')+'|[A-Za-z0-9_]+)\[[^\]]+\]$")
 DAX_ITER = {
     "SUM": "SUMX",
     "AVG": "AVERAGEX",
@@ -210,6 +212,11 @@ class FormulaContext:
     # When set, unknown columns become BLANK() and are appended to missing_column_todos.
     known_columns: set[str] | None = None
     missing_column_todos: list[str] = field(default_factory=list)
+    # Captions of the dimensions on the sheet that uses the calc; the first one is the
+    # partition/addressing field for RANK / WINDOW_* / RUNNING_* table calcs.
+    window_dims: list[str] = field(default_factory=list)
+    # Set when a table calc was approximated (shown as a note on the converted field)
+    window_notes: list[str] = field(default_factory=list)
 
 
 class TranspileFormulaError(Exception):
@@ -1280,6 +1287,9 @@ class Emitter:
                 return self._dax_agg_over_lod(fn, inner)
         args = [self.emit_dax(a) for a in node.args]
         original = node.name
+        window = self._dax_window_call(fn, args)
+        if window is not None:
+            return window
         if fn == "IIF" or fn == "IF":
             if len(args) != 3:
                 raise TranspileFormulaError("IIF expects 3 arguments")
@@ -1312,6 +1322,18 @@ class Emitter:
             if len(args) != 1:
                 raise TranspileFormulaError("LEN expects 1 argument")
             return f"LEN({args[0]})"
+        if (
+            fn in {"SUM", "AVG", "MIN", "MAX", "COUNT", "COUNTD"}
+            and len(args) == 1
+            and not _BARE_DAX_COLUMN.match(args[0].strip())
+            and not args[0].strip().endswith("[Number of Records]")
+        ):
+            # DAX SUM/AVERAGE/MIN/MAX/COUNT only take a column reference. A Tableau aggregate
+            # over an expression (SUM(IF cond THEN [Sales] END)) needs the row-wise iterator.
+            table = self._dax_table()
+            if fn == "COUNTD":
+                return f'COUNTROWS(DISTINCT(SELECTCOLUMNS({table}, "v", {args[0]})))'
+            return f"{DAX_ITER[fn]}({table}, {args[0]})"
         if fn == "COUNTD":
             if len(args) != 1:
                 raise TranspileFormulaError("COUNTD expects 1 argument")
@@ -1349,6 +1371,55 @@ class Emitter:
         self.partial = True
         self.unknown_functions.append(fn)
         return f"/* TODO: unmapped Tableau function {fn}: {self.ctx.original_formula or call} */ {call}"
+
+    _WINDOW_ITER = {"SUM": "SUMX", "AVG": "AVERAGEX", "MIN": "MINX", "MAX": "MAXX"}
+
+    def _dax_window_call(self, fn: str, args: list[str]) -> str | None:
+        """RANK / WINDOW_* / RUNNING_* / INDEX as per-sheet DAX over the sheet's first dimension.
+
+        Tableau resolves these along the view's addressing fields, so they are only
+        translated when the calc is used on a sheet with a dimension; otherwise the caller
+        falls back to the TODO marker.
+        """
+
+        is_rank = fn in {"RANK", "RANK_DENSE", "RANK_UNIQUE", "RANK_MODIFIED"}
+        is_window = fn in {"WINDOW_SUM", "WINDOW_AVG", "WINDOW_MIN", "WINDOW_MAX"}
+        is_running = fn in {"RUNNING_SUM", "RUNNING_AVG", "RUNNING_MIN", "RUNNING_MAX"}
+        if not (is_rank or is_window or is_running or fn == "INDEX"):
+            return None
+        if not self.ctx.window_dims:
+            return None
+        dim = dax_column_ref(self._dax_table_bare(), self.ctx.window_dims[0])
+        base = f"ALLSELECTED({dim})"
+        if fn == "INDEX":
+            self.ctx.window_notes.append(f"INDEX() approximated as the rank of [{self.ctx.window_dims[0]}]")
+            return f"RANKX({base}, {dim}, SELECTEDVALUE({dim}), ASC, DENSE)"
+        if not args:
+            return None
+        expr = args[0]
+        if is_rank:
+            ties = {"RANK": "SKIP", "RANK_DENSE": "DENSE", "RANK_UNIQUE": "SKIP", "RANK_MODIFIED": "SKIP"}[fn]
+            order = "ASC" if len(args) > 1 and "asc" in args[1].lower() else "DESC"
+            self.ctx.window_notes.append(
+                f"{fn} computed along [{self.ctx.window_dims[0]}] with RANKX over ALLSELECTED"
+            )
+            return f"RANKX({base}, CALCULATE({expr}), , {order}, {ties})"
+        agg = fn.split("_", 1)[1]
+        iterator = self._WINDOW_ITER[agg]
+        if is_window:
+            if len(args) > 1:
+                self.ctx.window_notes.append(f"{fn} offsets ignored; whole partition used")
+            self.ctx.window_notes.append(
+                f"{fn} computed along [{self.ctx.window_dims[0]}] over ALLSELECTED"
+            )
+            return f"{iterator}({base}, CALCULATE({expr}))"
+        self.ctx.window_notes.append(
+            f"{fn} computed as a cumulative total along [{self.ctx.window_dims[0]}]"
+        )
+        return (
+            f"VAR __cur = MAX({dim}) "
+            f"RETURN {iterator}(FILTER({base}, {dim} <= __cur), CALCULATE({expr}))"
+        )
 
     def _sql_date(self, fn: str, node: Call, args: list[str]) -> str | None:
         dialect = self.dialect

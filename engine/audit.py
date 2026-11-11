@@ -73,6 +73,32 @@ def _datasource_view_name(ds: DatasourceInfo, *, used: set[str] | None = None) -
     return fallback
 
 
+def pbi_table_name(ds: DatasourceInfo) -> str:
+    """Power BI table name, also used in DAX ``'Table'[Column]`` references.
+
+    Prefer the Tableau caption, then a human datasource name. A Hyper filename
+    is only the fallback when those are missing or are internal ids
+    (``federated.*``, ``Extract``), so the model table and the DAX agree.
+    """
+
+    def usable(value: str | None) -> str | None:
+        text = (value or "").strip()
+        if not text:
+            return None
+        low = text.lower()
+        if low.startswith(("dataengine.", "federated.", "sqlproxy.")) or low == "extract":
+            return None
+        return text
+
+    for candidate in (usable(ds.caption), usable(ds.name)):
+        if candidate:
+            return candidate
+    stem = _hyper_file_stem(ds)
+    if stem and stem.lower() != "extract":
+        return stem
+    return "Orders"
+
+
 def _hyper_file_stem(ds: DatasourceInfo) -> str | None:
     for conn in ds.connections:
         class_name = (conn.class_name or "").lower()

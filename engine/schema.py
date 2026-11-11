@@ -88,7 +88,37 @@ class DashboardZone(BaseModel):
     y: int | None = None
     w: int | None = None
     h: int | None = None
+    # Parameter control zones point at a parameter, e.g. "[Parameters].[Parameter 3]"
+    param: str | None = None
+    # Text zones: plain text (runs joined) and its first run's styling
+    text: str | None = None
+    font_color: str | None = None
+    font_size: str | None = None
+    font_name: str | None = None
+    # zone-style background-color, e.g. "#34657f"
+    fill: str | None = None
     children: list[DashboardZone] = Field(default_factory=list)
+
+
+class DashboardAction(BaseModel):
+    """A dashboard action (``<action>``): filter / highlight / url / go-to-sheet / parameter."""
+
+    name: str | None = None
+    caption: str | None = None
+    # "filter" (tsc:tsl-filter), "highlight" (tsc:brush) or "other"
+    kind: str = "other"
+    command: str | None = None
+    source_dashboard: str | None = None
+    # Worksheets that trigger the action; empty means every sheet on the source dashboard
+    source_sheets: list[str] = Field(default_factory=list)
+    # Sheets removed from the trigger set (``exclude-sheet`` on <source>)
+    source_excluded: list[str] = Field(default_factory=list)
+    # Dashboard (or sheet) the action applies to
+    target: str | None = None
+    # Raw comma separated list of sheets that do NOT react to the action
+    target_excluded: str | None = None
+    # False when the author restricted the action to selected fields
+    all_fields: bool = True
 
 
 class DashboardInfo(BaseModel):
@@ -96,6 +126,7 @@ class DashboardInfo(BaseModel):
     width: int | None = None
     height: int | None = None
     zones: list[DashboardZone] = Field(default_factory=list)
+    actions: list[DashboardAction] = Field(default_factory=list)
     svg: str | None = None
     html: str | None = None
 
@@ -110,6 +141,36 @@ class WorksheetInfo(BaseModel):
     mark_class: str | None = None
     # Shelf field -> Tableau derivation for plain aggregated pills, e.g. {"Sales": "sum"}
     aggregations: dict[str, str] = Field(default_factory=dict)
+    # Fields on the Detail ("lod") mark encoding, e.g. ["State"] on a filled map
+    detail_fields: list[str] = Field(default_factory=list)
+    # Categorical member filters: field -> kept string members, e.g. {"Region": ["Central"]}
+    filters: dict[str, list[str]] = Field(default_factory=dict)
+    # Mark encodings by kind, e.g. {"color": ["Profit"], "tooltip": ["Sales"], "text": [...]}
+    encodings: dict[str, list[str]] = Field(default_factory=dict)
+    custom_tooltip: bool = False
+    # Sorts as "Field" strings from computed-sort / manual-sort elements
+    sorts: list[str] = Field(default_factory=list)
+    # Filters we cannot mirror (quantitative, relative date, exclude, context ...): "Field (class)"
+    unmapped_filters: list[str] = Field(default_factory=list)
+    # Worksheet-local calcs that are constants such as MIN(1); they only size marks
+    constant_fields: list[str] = Field(default_factory=list)
+    # Mark labels switched on for the sheet (Tableau "Show mark labels")
+    show_labels: bool = False
+    # Aggregation of plain aggregated pills used on encodings, e.g. {"Sales": "sum"}
+    encoding_aggregations: dict[str, str] = Field(default_factory=dict)
+    # Sorts with direction: [{"field": "Region", "direction": "DESC", "using": "Sales"}]
+    sort_specs: list[dict[str, str]] = Field(default_factory=list)
+    # Categorical filters with no member list: candidates for a Power BI slicer
+    slicer_filters: list[str] = Field(default_factory=list)
+    # Formatting carried over: title text/colour, background and mark colours
+    title: str | None = None
+    title_color: str | None = None
+    background_color: str | None = None
+    mark_color: str | None = None
+    # field -> Tableau number format string (e.g. {"Sales": 'c"$"#,##0'})
+    number_formats: dict[str, str] = Field(default_factory=dict)
+    # Geometry encoding on a generated lat/long sheet: Tableau is drawing polygons (a filled map).
+    has_geometry: bool = False
 
 
 class MeasureNamesUsage(BaseModel):
@@ -218,6 +279,8 @@ class TranspileResult(BaseModel):
     conversion_summary: str = ""
     joins: list[JoinInfo] = Field(default_factory=list)
     worksheets: list[WorksheetInfo] = Field(default_factory=list)
+    # Tableau internal column name -> caption, per datasource name
+    name_maps: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     def model_dump_json_result(self) -> str:
         return self.model_dump_json(indent=2)
@@ -237,6 +300,8 @@ class RawCalculatedField(BaseModel):
     is_table_calc: bool = False
     worksheet: str | None = None
     table_calc_type: str | None = None
+    # CNT of a Tableau object-model table (datatype='table'), not a real column.
+    is_row_count: bool = False
 
 
 class ParsedWorkbook(BaseModel):

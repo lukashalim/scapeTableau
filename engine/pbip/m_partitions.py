@@ -75,7 +75,8 @@ INLINE_CSV_MAX_CHARS = 200_000
 def m_text_literal(text: str) -> str:
     """M text literal. ``#`` and quotes are escaped; newlines become ``#(lf)``."""
 
-    escaped = text.replace("#", "#(hash)").replace('"', '""')
+    # M's escape for a literal "#" is "#(#)"; anything else after "#(" is an invalid literal.
+    escaped = text.replace("#", "#(#)").replace('"', '""')
     escaped = (
         escaped.replace("\r\n", "#(cr)#(lf)")
         .replace("\n", "#(lf)")
@@ -91,11 +92,25 @@ def _typed_csv_query(source_expr: str, transforms: str) -> str:
     the whole table empty, so every measure on the visual stays blank.
     """
 
+    if transforms == "null":
+        return f"""let
+    Source = {source_expr},
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    #"Replaced Blanks" = Table.ReplaceValue(#"Promoted Headers", "", null, Replacer.ReplaceValue, Table.ColumnNames(#"Promoted Headers"))
+in
+    #"Replaced Blanks\""""
+
+    # Tableau extracts can omit columns that exist in the model (e.g. stub tables).
+    # TransformColumnTypes fails with "column ... wasn't found", so pad them with null first.
+    # MissingField.UseNull creates absent columns; no lambdas needed.
+    names = re.findall(r'\{("(?:[^"]|"")*"),', transforms)
+    ops = ", ".join(f"{{{n}, each _}}" for n in names)
     return f"""let
     Source = {source_expr},
     #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
     #"Replaced Blanks" = Table.ReplaceValue(#"Promoted Headers", "", null, Replacer.ReplaceValue, Table.ColumnNames(#"Promoted Headers")),
-    Typed = if {transforms} = null then #"Replaced Blanks" else Table.TransformColumnTypes(#"Replaced Blanks", {transforms})
+    Ensured = Table.TransformColumns(#"Replaced Blanks", {{{ops}}}, null, MissingField.UseNull),
+    Typed = Table.TransformColumnTypes(Ensured, {transforms})
 in
     Typed"""
 
@@ -118,7 +133,9 @@ def _csv_from_datafolder(filename: str, transforms: str) -> str:
     escaped = (filename or "table.csv").replace('"', '""').replace("\\", "\\\\")
     source = (
         f'Csv.Document(File.Contents(DataFolder & "\\{escaped}"), '
-        f'[Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.None])'
+        # Data/*.csv is written with standard quoting; QuoteStyle.None would split
+        # quoted fields that contain commas (cast lists, descriptions).
+        f'[Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv])'
     )
     return _typed_csv_query(source, transforms)
 
@@ -157,11 +174,17 @@ def _csv_plan(
     )
     if embedded:
         rows = max(0, len([ln for ln in (csv_text or "").splitlines() if ln.strip()]) - 1)
-        notes = [
-            f"Embedded {rows} data rows for '{table_name}' in the M partition "
-            "(no Postgres login and no DataFolder path). "
-            "In Desktop, use Refresh now / Apply changes once so the visual loads."
-        ]
+        if rows == 0:
+            notes = [
+                f"Embedded 0 data rows for '{table_name}' (no extract in the workbook). "
+                "The model and visuals are built, but they stay empty until this table is loaded."
+            ]
+        else:
+            notes = [
+                f"Embedded {rows} data rows for '{table_name}' in the M partition "
+                "(no Postgres login and no DataFolder path). "
+                "In Desktop, use Refresh now / Apply changes once so the visual loads."
+            ]
     else:
         notes = [note]
     return MPartitionPlan(

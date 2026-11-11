@@ -11,6 +11,8 @@ const api = {
     dialect: SqlDialect,
   ): Promise<ConvertStatus> =>
     ipcRenderer.invoke("transpile:run", sourcePath, dialect),
+  pbip: (sourcePath: string): Promise<ConvertStatus> =>
+    ipcRenderer.invoke("pbip:run", sourcePath),
   saveSql: (defaultName: string, content: string): Promise<string | null> =>
     ipcRenderer.invoke("dialog:saveSql", defaultName, content),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),

@@ -23,6 +23,13 @@ from engine.pbip.desktop_paths import (
 )
 from engine.pbip.m_partitions import plan_m_partition, tableau_type_to_m
 from engine.pbip.pbir import build_pbir_files, visual_caveats
+from engine.pbip.status import (
+    DashboardOutcome,
+    WorksheetOutcome,
+    build_worksheet_statuses,
+    render_status_json,
+    render_status_markdown,
+)
 from engine.pbip.render import (
     indent_block,
     load_template,
@@ -79,13 +86,9 @@ def _platform_json(*, item_type: str, display_name: str) -> str:
 
 
 def _pbi_table_name(ds: DatasourceInfo) -> str:
-    caption = (ds.caption or "").strip()
-    if caption and not caption.lower().startswith("dataengine."):
-        return caption
-    name = (ds.name or "").strip()
-    if name and not name.lower().startswith("dataengine.") and name.lower() != "extract":
-        return name
-    return caption or name or "Table"
+    from engine.audit import pbi_table_name
+
+    return pbi_table_name(ds)
 
 
 def _datatype_tmdl(datatype: str | None) -> str:
@@ -131,7 +134,9 @@ def _source_columns(ds: DatasourceInfo) -> list[tuple[str, str | None, str | Non
     out: list[tuple[str, str | None, str | None]] = []
     seen: set[str] = set()
     for field in ds.fields:
-        if field.calculated:
+        if field.calculated or (field.datatype or "").lower() == "table":
+            continue
+        if "__tableau_internal_object_id__" in (field.name or ""):
             continue
         caption = (field.caption or field.name or "").strip("[]")
         if not caption or caption in seen:
@@ -213,7 +218,23 @@ def _measure_eligible(field: CalculatedField) -> bool:
         "SWITCH(",
         "COALESCE(",
     )
-    return any(t in upper for t in tokens)
+    if any(t in upper for t in tokens):
+        return True
+    # Pure measure arithmetic ([CP Sales] - [PP Sales], SWITCH over [Measure] refs) has no
+    # aggregate token, yet must still be a measure: no row context exists for a column.
+    return field.dax_kind == "measure" and "[" in dax and not re.search(r"'\s*\[", dax)
+
+
+# Text columns Power BI should geocode on map visuals (Tableau infers these from names too).
+_GEO_CATEGORIES = {
+    "state": "StateOrProvince",
+    "state/province": "StateOrProvince",
+    "province": "StateOrProvince",
+    "country": "Country",
+    "country/region": "Country",
+    "city": "City",
+    "county": "County",
+}
 
 
 def _column_block(caption: str, datatype: str | None, role: str | None) -> str:
@@ -229,6 +250,9 @@ def _column_block(caption: str, datatype: str | None, role: str | None) -> str:
         "",
         "\t\tannotation SummarizationSetBy = Automatic",
     ]
+    category = _GEO_CATEGORIES.get(caption.strip().lower())
+    if category and data_type == "string":
+        lines.insert(2, f"\t\tdataCategory: {category}")
     if fmt:
         lines.insert(3, f"\t\tformatString: {fmt}")
     if data_type == "dateTime" and (datatype or "").lower() == "date":
@@ -290,6 +314,28 @@ def _partition_block(table_name: str, m_expr: str) -> str:
     )
 
 
+def _model_joins(
+    joins: list[JoinInfo], table_name_by_ds: dict[str, str]
+) -> tuple[list[tuple[str, str, JoinInfo]], list[JoinInfo]]:
+    """Split joins into (usable relationships, same-table joins Desktop cannot model).
+
+    Tableau joins tables inside one datasource (e.g. Orders + Returns) and the
+    extract is then a single flat table. Both sides resolve to the same Power BI
+    table; Desktop rejects that as "a relationship to itself".
+    """
+
+    usable: list[tuple[str, str, JoinInfo]] = []
+    skipped: list[JoinInfo] = []
+    for join in joins:
+        left = table_name_by_ds.get(join.left_datasource) or join.left_datasource
+        right = table_name_by_ds.get(join.right_datasource) or join.right_datasource
+        if left == right:
+            skipped.append(join)
+        else:
+            usable.append((left, right, join))
+    return usable, skipped
+
+
 def _relationships_tmdl(joins: list[JoinInfo], table_name_by_ds: dict[str, str]) -> str:
     """Serialize relationships.tmdl — Desktop rejects empty lines as InvalidLineType.
 
@@ -297,12 +343,11 @@ def _relationships_tmdl(joins: list[JoinInfo], table_name_by_ds: dict[str, str])
     Do not write ``///`` comments here; they leave a blank line that fails open.
     """
 
-    if not joins:
+    usable, _skipped = _model_joins(joins, table_name_by_ds)
+    if not usable:
         return ""
     blocks: list[str] = []
-    for i, join in enumerate(joins, start=1):
-        left_table = table_name_by_ds.get(join.left_datasource) or join.left_datasource
-        right_table = table_name_by_ds.get(join.right_datasource) or join.right_datasource
+    for i, (left_table, right_table, join) in enumerate(usable, start=1):
         blocks.append(
             "\n".join(
                 [
@@ -419,8 +464,44 @@ table '{table.replace("'", "''")}'
 	annotation PBI_ResultType = Table
 """
             out.append((table, tmdl))
-        elif info.allowed_values:
-            rows = ", ".join(f'{{"{v.replace(chr(34), chr(34)+chr(34))}"}}' for v in info.allowed_values[:50])
+        elif dt in {"date", "datetime"}:
+            inner = text.strip("#").strip()
+            parsed = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", inner)
+            if not parsed:
+                continue
+            y, mo, d = (int(g) for g in parsed.groups())
+            measure_name = f"{caption} Value"
+            qt = table.replace("'", "''")
+            qc = caption.replace("'", "''")
+            tmdl = f"""/// What-If date parameter (Tableau '{caption}').
+table '{qt}'
+	lineageTag: {_lineage()}
+
+	measure '{measure_name.replace("'", "''")}' = SELECTEDVALUE('{qt}'[{qc}], DATE({y}, {mo}, {d}))
+		lineageTag: {_lineage()}
+		displayFolder: Parameters
+
+	column '{qc}'
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: {_lineage()}
+		summarizeBy: none
+		sourceColumn: [Date]
+
+		annotation SummarizationSetBy = Automatic
+
+	partition '{qt}' = calculated
+		mode: import
+		source = CALENDAR(DATE({y - 4}, 1, 1), DATE({y + 2}, 12, 31))
+
+	annotation PBI_ResultType = Table
+"""
+            out.append((table, tmdl))
+        elif info.allowed_values or dt in {"string", "str"}:
+            rows = ", ".join(
+                f'{{"{v.replace(chr(34), chr(34)+chr(34))}"}}'
+                for v in (info.allowed_values or [text.replace("\\%", "%").replace('\\"', '"')])[:50]
+            )
             measure_name = f"{caption} Value"
             default = text.replace('"', '""')
             safe = re.sub(r"[^A-Za-z0-9_]", "_", caption) + "_WhatIf"
@@ -635,7 +716,25 @@ def build_pbip_files(
         },
     )
     joins = list(getattr(result, "joins", None) or [])
-    if not joins:
+    usable_joins, same_table_joins = _model_joins(joins, table_name_by_ds)
+    if same_table_joins:
+        report.notes.append(
+            "Skipped %d Tableau join(s) between tables that are one flat table in the model "
+            "(%s). Tableau already joined them inside the extract, and Desktop rejects a "
+            "relationship from a table to itself."
+            % (
+                len(same_table_joins),
+                ", ".join(
+                    sorted(
+                        {
+                            f"{j.left_column} = {j.right_column}"
+                            for j in same_table_joins
+                        }
+                    )
+                ),
+            )
+        )
+    if not usable_joins and not same_table_joins:
         report.notes.append(
             "No Tableau joins discovered — relationships.tmdl left empty "
             "(Desktop rejects comment/blank-only TMDL in that file)."
@@ -671,7 +770,20 @@ def build_pbip_files(
             f"{report_folder}/StaticResources/SharedResources/BaseThemes/CY24SU10.json"
         ] = _THEME_PATH.read_text(encoding="utf-8")
     # Stage 3: real PBIR definition/ pages + visuals (Franssens layout)
-    files.update(build_pbir_files(result, report_folder, table_name_by_ds=table_name_by_ds))
+    outcomes: list[WorksheetOutcome] = []
+    dashboard_outcomes: list[DashboardOutcome] = []
+    files.update(
+        build_pbir_files(
+            result,
+            report_folder,
+            table_name_by_ds=table_name_by_ds,
+            outcomes=outcomes,
+            dashboard_outcomes=dashboard_outcomes,
+        )
+    )
+    statuses = build_worksheet_statuses(result, outcomes, dashboard_outcomes)
+    files["CONVERSION_STATUS.md"] = render_status_markdown(statuses)
+    files["conversion_status.json"] = render_status_json(statuses)
 
     files[f"{name}.pbip"] = render_json_template(
         "project.pbip.json",
@@ -706,10 +818,22 @@ def write_pbip_dir(
     result: TranspileResult,
     dest: Path,
     *,
+    source_stem: str | None = None,
     source: object | None = None,
 ) -> ConversionReport:
-    files, report = build_pbip_files(result, source=source)
+    files, report = build_pbip_files(
+        result, source_stem=source_stem, source=source
+    )
     dest.mkdir(parents=True, exist_ok=True)
+    # Desktop requires an absolute path for File.Contents; a relative "Data" fails with
+    # "The supplied file path must be a valid absolute path." The folder is known here.
+    data_dir = str((dest / "Data").resolve())
+    for path, content in list(files.items()):
+        if path.endswith("expressions.tmdl") and isinstance(content, str):
+            files[path] = content.replace(
+                'expression DataFolder = "Data" meta',
+                f'expression DataFolder = "{data_dir}" meta',
+            )
     for path, content in files.items():
         target = dest / path
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,4 @@
-"""Extract table CSVs into the PBIP ``Data/`` folder (sibling of the .pbip).
+﻿"""Extract table CSVs into the PBIP ``Data/`` folder (sibling of the .pbip).
 
 Small CSVs are also embedded in the M partition so Desktop can load rows
 without a DataFolder path. Larger extracts stay as ``File.Contents(DataFolder & "\\file.csv")``.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from engine.hyper import hyper_conversion_enabled, read_hyper_bytes
 from engine.parser import Source, _is_zip, _read_bytes, is_hyper_bytes, list_archive_members
-from engine.schema import DatasourceInfo, RelationInfo, TranspileResult
+from engine.schema import DatasourceInfo, JoinInfo, RelationInfo, TranspileResult
 
 _SAFE = re.compile(r"[^A-Za-z0-9._ -]+")
 _REGION_EQ = re.compile(
@@ -131,24 +131,43 @@ def _fill_blank_alias_columns(
     return notes
 
 
+def _hdr_key(name: str) -> str:
+    """Header identity ignoring case, spaces and punctuation (order_id == Order Id)."""
+
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _source_index(target: str, index: dict[str, int]) -> int | None:
+    key = _hdr_key(target)
+    if key in index:
+        return index[key]
+    # Tableau read a doubled header ('Ship Mode Ship Mode'); the sibling file has 'Ship Mode'.
+    half = len(key) // 2
+    if half and len(key) % 2 == 0 and key[:half] == key[half:]:
+        return index.get(key[:half])
+    return None
+
+
 def _align_rows(
     target_headers: list[str],
     source_headers: list[str],
     source_rows: list[list[str]],
     notes: list[str] | None = None,
 ) -> list[list[object]]:
-    """Map source columns onto target headers by case-insensitive name."""
+    """Map source columns onto target headers by normalised name."""
 
     if not target_headers:
         return [list(r) for r in source_rows]
-    index = {h.strip().lower(): i for i, h in enumerate(source_headers) if h}
+    index: dict[str, int] = {}
+    for i, h in enumerate(source_headers):
+        if h:
+            index.setdefault(_hdr_key(h), i)
+    positions = [_source_index(h, index) for h in target_headers]
     out: list[list[object]] = []
     for row in source_rows:
-        aligned: list[object] = []
-        for header in target_headers:
-            idx = index.get(header.strip().lower())
-            aligned.append(row[idx] if idx is not None and idx < len(row) else "")
-        out.append(aligned)
+        out.append(
+            [row[i] if i is not None and i < len(row) else "" for i in positions]
+        )
     extra = _fill_blank_alias_columns(target_headers, out)
     if notes is not None:
         notes.extend(extra)
@@ -159,14 +178,37 @@ def _headers_for_ds(ds: DatasourceInfo) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     for field in ds.fields:
-        if field.calculated:
+        if field.calculated or (field.datatype or "").lower() == "table":
+            continue
+        if "__tableau_internal_object_id__" in (field.name or ""):
             continue
         cap = (field.caption or field.name or "").strip("[]")
-        if not cap or cap in seen:
+        key = _hdr_key(cap)
+        if not cap or key in seen:
             continue
-        seen.add(cap)
+        seen.add(key)
         out.append(cap)
     return out
+
+
+_TEXT_SUFFIXES = {".csv", ".tsv", ".txt"}
+_EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xls"}
+_DATA_FILE_SUFFIXES = _TEXT_SUFFIXES | _EXCEL_SUFFIXES
+
+
+def _real_file_ref(ds: DatasourceInfo) -> str | None:
+    """Name of the CSV/Excel file a datasource points at (None for synthetic fixtures)."""
+
+    for conn in ds.connections:
+        name = Path((conn.filename or "").replace("\\", "/")).name
+        if name and Path(name).suffix.lower() in _DATA_FILE_SUFFIXES:
+            return name
+    rel = _primary_relation(ds)
+    for ref in ((rel.name if rel else None), (rel.table if rel else None)):
+        text = (ref or "").strip("[]'\" ")
+        if Path(text).suffix.lower() in _TEXT_SUFFIXES:
+            return Path(text).name
+    return None
 
 
 def _references_hyper(ds: DatasourceInfo) -> bool:
@@ -232,6 +274,209 @@ def _find_orders_csv(csv_members: dict[str, bytes]) -> bytes | None:
         if Path(key).name.lower() == "orders.csv":
             return payload
     return None
+
+
+
+
+def _workbook_dir(source: Source | None) -> Path | None:
+    """Directory of a .twb/.twbx path. Bytes and file objects have no siblings."""
+
+    path: Path | None = None
+    if isinstance(source, Path):
+        path = source
+    elif isinstance(source, str):
+        candidate = Path(source)
+        if candidate.suffix.lower() in {".twb", ".twbx", ".tdsx"}:
+            path = candidate
+    if path is None or not path.is_file():
+        return None
+    return path.parent
+
+
+def _norm_stem(name: str) -> str:
+    stem = re.sub(r"\d+$", "", re.sub(r"[^a-z0-9]", "", name.lower()))
+    return stem
+
+
+def _relation_sheet(ds: DatasourceInfo) -> str | None:
+    """Tableau Excel relations look like ``['HR data$']``."""
+
+    rel = _primary_relation(ds)
+    raw = ((rel.table if rel else None) or "").strip()
+    raw = raw.strip("[]").strip("'\"").strip()
+    if raw.endswith("$"):
+        raw = raw[:-1].strip()
+    return raw or None
+
+
+def _xls_sheet_csv(path: Path, sheet: str | None) -> bytes | None:
+    """First matching worksheet of a legacy .xls book (needs the optional xlrd package)."""
+
+    try:
+        import xlrd
+    except ImportError:
+        return None
+    try:
+        book = xlrd.open_workbook(str(path), on_demand=True)
+    except Exception:  # noqa: BLE001 - unreadable/corrupt book: fall back to header-only
+        return None
+    try:
+        names = book.sheet_names()
+        target = None
+        if sheet:
+            want = sheet.strip().lower()
+            target = next((n for n in names if n.strip().lower() == want), None)
+        target = target or (names[0] if names else None)
+        if target is None:
+            return None
+        sh = book.sheet_by_name(target)
+        if sh.nrows == 0:
+            return None
+        rows = [
+            ["" if c in (None, "") else c for c in sh.row_values(r)] for r in range(sh.nrows)
+        ]
+        return _rows_to_csv_bytes([str(h) for h in rows[0]], rows[1:])
+    finally:
+        book.release_resources()
+
+
+def _excel_sheet_csv(path: Path, sheet: str | None) -> bytes | None:
+    """First matching worksheet of a sibling .xlsx/.xls, as CSV bytes."""
+
+    if path.suffix.lower() == ".xls":
+        return _xls_sheet_csv(path, sheet)
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return None
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        names = list(wb.sheetnames)
+        target = None
+        if sheet:
+            want = sheet.strip().lower()
+            for name in names:
+                if name.strip().lower() == want:
+                    target = name
+                    break
+        target = target or (names[0] if names else None)
+        if target is None:
+            return None
+        rows_iter = wb[target].iter_rows(values_only=True)
+        header_row = next(rows_iter, None)
+        if not header_row:
+            return None
+        headers = ["" if cell is None else str(cell) for cell in header_row]
+        body = [list(row) for row in rows_iter]
+        return _rows_to_csv_bytes(headers, body)
+    finally:
+        wb.close()
+
+
+_MAX_JOINED_ROWS = 200_000
+
+
+def _exact_key(name: str) -> str:
+    """Case-insensitive header key that keeps punctuation ('% Change' != 'Change')."""
+
+    return (name or "").strip().lower()
+
+
+def _sheet_name(rel: RelationInfo) -> str:
+    raw = (rel.table or rel.name or "").strip().strip("[]").strip("'\"").strip()
+    return raw[:-1].strip() if raw.endswith("$") else raw
+
+
+def _joined_excel_csv(
+    book: Path,
+    ds: DatasourceInfo,
+    joins: list[JoinInfo],
+    headers: list[str],
+) -> tuple[bytes | None, str]:
+    """Materialise a Tableau join of two sheets of one Excel book as a single flat CSV.
+
+    Tableau joins ``<relation type='table'>`` sheets at query time; the Power BI model here
+    keeps one flat table per datasource, so the join is evaluated while writing Data/.
+    Returns ``(csv bytes | None, note)``; ``None`` means the join was not applied.
+    """
+
+    tables = [r for r in ds.relations if r.type == "table"]
+    if len(tables) < 2:
+        return None, ""
+    clause = next(
+        (
+            j for j in joins
+            if (j.left_datasource in {ds.caption, ds.name})
+            and (j.right_datasource in {ds.caption, ds.name})
+        ),
+        None,
+    )
+    if clause is None:
+        return None, ""
+    left_rel, right_rel = tables[0], tables[1]
+    left_csv = _excel_sheet_csv(book, _sheet_name(left_rel))
+    right_csv = _excel_sheet_csv(book, _sheet_name(right_rel))
+    if not left_csv or not right_csv:
+        return None, ""
+    l_head, l_rows = _parse_csv_bytes(left_csv)
+    r_head, r_rows = _parse_csv_bytes(right_csv)
+    l_index = {_exact_key(h): i for i, h in enumerate(l_head)}
+    r_index = {_exact_key(h): i for i, h in enumerate(r_head)}
+    lk = l_index.get(_exact_key(clause.left_column))
+    rk = r_index.get(_exact_key(clause.right_column))
+    if lk is None or rk is None:
+        return None, ""
+    by_key: dict[str, list[list[str]]] = {}
+    for row in r_rows:
+        by_key.setdefault(row[rk] if rk < len(row) else "", []).append(row)
+    total = 0
+    for row in l_rows:
+        key = row[lk] if lk < len(row) else ""
+        total += max(len(by_key.get(key, [])), 1 if (clause.join_type or "").lower() == "left" else 0)
+    if total > _MAX_JOINED_ROWS:
+        return None, (
+            f"join of '{_sheet_name(left_rel)}' and '{_sheet_name(right_rel)}' on "
+            f"[{clause.left_column}] would create {total:,} rows; only the first sheet was loaded."
+        )
+
+    suffix = f" ({right_rel.name})".lower() if right_rel.name else ""
+
+    def source_for(header: str) -> tuple[str, int] | None:
+        key = _exact_key(header)
+        if key in l_index:
+            return "l", l_index[key]
+        stripped = header
+        if suffix and header.lower().endswith(suffix):
+            stripped = header[: -len(suffix)]
+        skey = _exact_key(stripped)
+        if skey in r_index:
+            return "r", r_index[skey]
+        return None
+
+    sources = [source_for(h) for h in headers]
+    keep_left = (clause.join_type or "inner").lower() in {"left", "full"}
+    blank_right: list[str] = [""] * len(r_head)
+    out_rows: list[list[object]] = []
+    for lrow in l_rows:
+        matches = by_key.get(lrow[lk] if lk < len(lrow) else "", [])
+        if not matches and keep_left:
+            matches = [blank_right]
+        for rrow in matches:
+            line: list[object] = []
+            for src in sources:
+                if src is None:
+                    line.append("")
+                    continue
+                side, idx = src
+                data = lrow if side == "l" else rrow
+                line.append(data[idx] if idx < len(data) else "")
+            out_rows.append(line)
+    note = (
+        f"joined '{_sheet_name(left_rel)}' and '{_sheet_name(right_rel)}' on "
+        f"[{clause.left_column}] = [{clause.right_column}] ({clause.join_type or 'inner'}) "
+        f"into {len(out_rows):,} rows."
+    )
+    return _rows_to_csv_bytes(headers, out_rows), note
 
 
 def _load_companion_orders(source: Source | None) -> bytes | None:
@@ -377,6 +622,12 @@ def collect_data_csvs(
     elif archive_bytes and is_hyper_bytes(archive_bytes, filename):
         hyper_payloads.append((filename or "extract.hyper", archive_bytes))
 
+    sibling_dir = _workbook_dir(source)
+    if sibling_dir is not None:
+        for child in sibling_dir.iterdir():
+            if child.is_file() and child.suffix.lower() in _TEXT_SUFFIXES:
+                csv_members.setdefault(child.name.lower(), child.read_bytes())
+
     companion_orders = _load_companion_orders(source)
     if companion_orders and "orders.csv" not in csv_members:
         csv_members["orders.csv"] = companion_orders
@@ -447,6 +698,63 @@ def collect_data_csvs(
                 matched_csv = csv_members[key]
                 break
 
+        if matched_csv is None and sibling_dir is not None:
+            for conn in ds.connections:
+                fname = conn.filename or ""
+                if Path(fname).suffix.lower() not in _EXCEL_SUFFIXES:
+                    continue
+                book = sibling_dir / Path(fname).name
+                if not book.is_file():
+                    continue
+                joined_csv, join_note = _joined_excel_csv(
+                    book, ds, list(getattr(result, "joins", None) or []), headers
+                )
+                if joined_csv:
+                    matched_csv = joined_csv
+                    notes.append(f"Data/{csv_name}: {join_note}")
+                    break
+                if join_note:
+                    notes.append(f"Data/{csv_name}: {join_note}")
+                sheet_csv = _excel_sheet_csv(book, _relation_sheet(ds))
+                if sheet_csv:
+                    matched_csv = sheet_csv
+                    notes.append(
+                        f"Data/{csv_name}: loaded '{_relation_sheet(ds) or 'first sheet'}' "
+                        f"from sibling workbook {book.name}."
+                    )
+                    break
+                if book.suffix.lower() == ".xls":
+                    notes.append(
+                        f"Data/{csv_name}: sibling {book.name} is .xls and could not be read "
+                        "(install xlrd, or save it as .xlsx)."
+                    )
+
+        if matched_csv is None and sibling_dir is not None:
+            needles = [
+                _norm_stem(ds.caption or ""),
+                _norm_stem(ds.name or ""),
+            ]
+            for conn in ds.connections:
+                if conn.filename:
+                    needles.append(_norm_stem(Path(conn.filename).stem))
+            needles = [n for n in needles if len(n) >= 8]
+            best_len = 0
+            for child in sibling_dir.iterdir():
+                if not child.is_file() or child.suffix.lower() not in {".csv", ".tsv"}:
+                    continue
+                stem = _norm_stem(child.stem)
+                if len(stem) < 8:
+                    continue
+                for needle in needles:
+                    if stem == needle or stem.startswith(needle) or needle.startswith(stem):
+                        if len(stem) > best_len:
+                            best_len = len(stem)
+                            matched_csv = csv_members.get(child.name.lower())
+            if matched_csv is not None and best_len:
+                notes.append(
+                    f"Data/{csv_name}: matched a sibling CSV by name for '{table_name}'."
+                )
+
         if matched_csv is not None:
             src_headers, src_rows = _parse_csv_bytes(matched_csv)
             used_headers = headers or src_headers
@@ -497,6 +805,17 @@ def collect_data_csvs(
             used_headers = headers or ["Column1"]
             if used_headers == ["Column1"]:
                 notes.append(f"Data/{csv_name}: no columns discovered — wrote stub header.")
+
+        file_ref = _real_file_ref(ds)
+        if file_ref:
+            # A real file connection whose file we could not find: never invent rows.
+            out[zip_path] = _rows_to_csv_bytes(used_headers, [])
+            headers_by_table[table_name] = used_headers
+            notes.append(
+                f"Data/{csv_name}: header-only. Source file '{file_ref}' was not found next to "
+                f"the workbook; repoint the '{table_name}' Power Query source to it."
+            )
+            continue
 
         demo = _demo_rows_for_headers(used_headers)
         # Only seed demo when we recognize at least one demo column

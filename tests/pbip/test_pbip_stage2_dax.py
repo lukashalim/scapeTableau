@@ -133,3 +133,16 @@ def test_superstore_golden_measures() -> None:
     if pct_key in fields:
         assert fields[pct_key].dax_status == ParseStatus.ok
         assert "ALLSELECTED" in (fields[pct_key].dax or "")
+
+
+def test_pbi_table_name_prefers_datasource_name_over_hyper_filename() -> None:
+    from engine.audit import pbi_table_name
+    from engine.schema import ConnectionInfo, DatasourceInfo
+
+    ds = DatasourceInfo(
+        name="Sample - Superstore",
+        connections=[
+            ConnectionInfo(class_name="hyper", filename="Data/Sample _ Superstore.hyper")
+        ],
+    )
+    assert pbi_table_name(ds) == "Sample - Superstore"

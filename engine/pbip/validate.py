@@ -23,6 +23,12 @@ _BARE_AGG = re.compile(
     r"\b(?P<fn>SUM|AVERAGE|MIN|MAX|COUNT|DISTINCTCOUNT)\(\s*'(?P<col>[^']+)'\s*\)",
     re.IGNORECASE,
 )
+# SUM(IF(...)) / AVERAGE(a * b): DAX aggregators accept only a column reference — use SUMX etc.
+_EXPR_AGG = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<fn>SUM|AVERAGE|COUNT)\(\s*(?!'(?:[^']|'')+'\[[^\]]+\]\s*\))"
+    r"(?P<arg>[A-Za-z_]+\()",
+    re.IGNORECASE,
+)
 
 
 class PbipValidationError(Exception):
@@ -129,6 +135,11 @@ def _check_dax_refs(dax: str, catalog: ModelCatalog, where: str, errors: list[st
         errors.append(
             f"{where}: illegal bare {m.group('fn')}('{m.group('col')}') without table — "
             f"use 'Table'[{m.group('col')}]"
+        )
+    for m in _EXPR_AGG.finditer(dax):
+        errors.append(
+            f"{where}: {m.group('fn')}() over an expression is invalid DAX — "
+            f"use {m.group('fn')}X(table, expression)"
         )
     for m in _DAX_COL_REF.finditer(dax):
         table = (m.group("qtable") or m.group("table") or "").replace("''", "'")
@@ -265,7 +276,8 @@ def validate_pbip_files(files: dict[str, str | bytes], *, fail: bool = True) -> 
                     _validate_required(instance, schema, path, errors)
                 break
 
-    # Visual JSON required keys + at least one data-bound projection
+    # Visual JSON required keys + at least one data-bound projection per page
+    pages_seen: dict[str, bool] = {}
     for path, content in files.items():
         if not path.endswith("/visual.json"):
             continue
@@ -278,8 +290,15 @@ def validate_pbip_files(files: dict[str, str | bytes], *, fail: bool = True) -> 
             if key not in visual:
                 errors.append(f"{path}: missing '{key}'")
         vbody = visual.get("visual") or {}
-        if (vbody.get("visualType") or "").lower() in {"textbox", "shape", "actionbutton"}:
-            errors.append(f"{path}: textbox/shape visuals are not allowed — use data-bound charts")
+        vtype = (vbody.get("visualType") or "").lower()
+        page_key = path.rsplit("/visuals/", 1)[0]
+        pages_seen.setdefault(page_key, False)
+        if vtype == "actionbutton":
+            # Desktop draws a blank rectangle for these (Franssens visual-cookbook)
+            errors.append(f"{path}: actionButton visuals render blank — use shape/textbox")
+            continue
+        if vtype in {"textbox", "shape", "pagenavigator"}:
+            continue  # dashboard decoration / navigation: no field binding
         qs = ((vbody.get("query") or {}).get("queryState")) or {}
         projs = []
         for role in qs.values():
@@ -287,6 +306,8 @@ def validate_pbip_files(files: dict[str, str | bytes], *, fail: bool = True) -> 
                 projs.extend(role.get("projections") or [])
         if not projs:
             errors.append(f"{path}: missing data-bound field projections")
+        else:
+            pages_seen[page_key] = True
 
     catalog = _parse_tmdl_model(files)
     for path, content in files.items():

@@ -145,13 +145,101 @@ def test_join_fixture_relationships() -> None:
     assert result.joins, "expected join parse from fixture"
     rel_path = next(n for n in _zip_names(zip_bytes) if n.endswith("relationships.tmdl"))
     rel = _read(zip_bytes, rel_path)
-    assert "relationship" in rel
-    assert "fromCardinality: many" in rel
-    assert "toCardinality: one" in rel
-    assert "crossFilteringBehavior: oneDirection" in rel
+    # Both join sides live in one flat table; Desktop rejects self-relationships.
+    for block in rel.split("relationship ")[1:]:
+        from_col = re.search(r"fromColumn: (.+)\.", block)
+        to_col = re.search(r"toColumn: (.+)\.", block)
+        assert from_col and to_col and from_col.group(1) != to_col.group(1)
     # No leading empty line (Desktop: InvalidLineType Empty!)
     assert not rel.startswith("\n")
     assert "///" not in rel
+
+
+def test_same_table_join_is_not_emitted_as_relationship() -> None:
+    """Desktop: "table has a relationship to itself ... not supported"."""
+    from engine.pbip.package import _model_joins, _relationships_tmdl
+    from engine.schema import JoinInfo
+
+    join = JoinInfo(
+        left_datasource="Orders",
+        left_column="Order ID",
+        right_datasource="Returns",
+        right_column="Order ID",
+    )
+    flat = {"Orders": "Sample - Superstore", "Returns": "Sample - Superstore"}
+    usable, skipped = _model_joins([join], flat)
+    assert usable == [] and skipped == [join]
+    assert _relationships_tmdl([join], flat) == ""
+
+    split = {"Orders": "Orders", "Returns": "Returns"}
+    assert "relationship Relationship1" in _relationships_tmdl([join], split)
+
+
+def test_typed_csv_query_is_well_formed_m() -> None:
+    """A stray quote after ``Typed`` made Desktop fail with "Token ';' expected"."""
+    from engine.pbip.m_partitions import _typed_csv_query
+
+    transforms = '{{"A", type text}, {"B", Int64.Type}}'
+    for query in (
+        _typed_csv_query('Csv.Document(File.Contents("x.csv"))', transforms),
+        _typed_csv_query('Csv.Document(File.Contents("x.csv"))', "null"),
+    ):
+        assert query.count('"') % 2 == 0, query
+        assert query.rstrip().splitlines()[-1].strip() in {"Typed", '#"Replaced Blanks"'}
+        assert "MissingField.UseNull" in query or "Typed" not in query
+
+
+def test_filled_map_worksheet_maps_to_filled_map_with_filter() -> None:
+    """Tableau Multipolygon map -> filledMap (State as Location) + Region member filter."""
+    from engine.parser import parse_workbook
+
+    twb = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook version='18.1'><datasources>
+<datasource name='Orders' caption='Orders'>
+<connection class='textscan' filename='o.csv' directory='.'/>
+<column name='[State]' datatype='string' role='dimension'/>
+<column name='[Region]' datatype='string' role='dimension'/>
+<column name='[Sales]' datatype='real' role='measure'/>
+</datasource></datasources>
+<worksheets><worksheet name='Central Map'><table><view>
+<datasources><datasource name='Orders'/></datasources>
+<filter class='categorical' column='[Orders].[none:Region:nk]'>
+<groupfilter function='member' level='[none:Region:nk]' member='&quot;Central&quot;'/>
+</filter></view>
+<panes><pane><mark class='Multipolygon'/><encodings>
+<lod column='[Orders].[none:State:nk]'/>
+<color column='[Orders].[sum:Sales:qk]'/><tooltip column='[Orders].[none:Region:nk]'/></encodings></pane></panes>
+<rows>[Orders].[Latitude (generated)]</rows><cols>[Orders].[Longitude (generated)]</cols>
+</table></worksheet></worksheets></workbook>"""
+    path = Path(__file__).parent / "_tmp_map.twb"
+    path.write_text(twb, encoding="utf-8")
+    try:
+        zip_bytes, result = transpile_to_pbip(path)
+    finally:
+        path.unlink(missing_ok=True)
+    assert result.worksheets[0].filters == {"Region": ["Central"]}
+    assert result.worksheets[0].detail_fields == ["State"]
+    visual_path = next(n for n in _zip_names(zip_bytes) if n.endswith("visual.json"))
+    visual = json.loads(_read(zip_bytes, visual_path))
+    assert visual["visual"]["visualType"] == "filledMap"
+    location = visual["visual"]["query"]["queryState"]["Category"]["projections"][0]
+    assert location["field"]["Column"]["Property"] == "State"
+    flt = visual["filterConfig"]["filters"][0]
+    assert flt["field"]["Column"]["Property"] == "Region"
+    where = flt["filter"]["Where"][0]["Condition"]["In"]["Values"]
+    assert where == [[{"Literal": {"Value": "'Central'"}}]]
+
+    # Per-element status report
+    status = json.loads(_read(zip_bytes, "conversion_status.json"))[0]
+    rows = {(e["element"], e["tableau"]): e["status"] for e in status["elements"]}
+    assert rows[("Visual type", "Multipolygon mark")] == "Full"
+    assert rows[("Detail / Location", "Detail: State")] == "Full"
+    assert rows[("Filter", "Region = Central")] == "Full"
+    # The colour measure now drives the map's fill value role.
+    assert rows[("Color", "Color: Sales")] == "Full"
+    assert rows[("Formatting", "Colors, fonts, mark styles, axes, title")] == "Not converted"
+    md = _read(zip_bytes, "CONVERSION_STATUS.md")
+    assert "## Central Map" in md
 
 
 def test_empty_relationships_tmdl_is_truly_empty() -> None:
@@ -211,6 +299,145 @@ def test_superstore_pbip_golden_shape() -> None:
 
 
 _TMDL_OBJECT = re.compile(r"^(table|column|measure|partition|relationship|expression|ref|database|model)\b", re.M)
+
+
+def test_custom_sql_object_count_becomes_filled_map_and_bars(tmp_path: Path) -> None:
+    """Live custom SQL: metadata columns, CNT(table) as COUNTROWS, geometry as a filled map.
+
+    Tableau often omits a ``<column>`` for query outputs and counts the object-model
+    table (``datatype='table'``) instead of a field. That is the businesses map:
+    polygons coloured by row count, and a bar of industry by that same count.
+    """
+
+    twb = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook version='18.1'>
+<datasources>
+  <datasource name='federated.m' caption='businesses (postgres)'>
+    <connection class='federated'>
+      <named-connections>
+        <named-connection name='postgres.1'>
+          <connection class='postgres' server='db.example.com' dbname='postgres' port='5432'/>
+        </named-connection>
+      </named-connections>
+      <relation name='Custom SQL Query' type='text' connection='postgres.1'>select b.state, cc.display_name as category_name, cg.label as industry from businesses b</relation>
+      <metadata-records>
+        <metadata-record class='column'>
+          <remote-name>state</remote-name>
+          <local-name>[state]</local-name>
+          <local-type>string</local-type>
+        </metadata-record>
+        <metadata-record class='column'>
+          <remote-name>category_name</remote-name>
+          <local-name>[category_name]</local-name>
+          <local-type>string</local-type>
+        </metadata-record>
+        <metadata-record class='column'>
+          <remote-name>industry</remote-name>
+          <local-name>[industry]</local-name>
+          <local-type>string</local-type>
+        </metadata-record>
+      </metadata-records>
+    </connection>
+    <column caption='Category' datatype='string' name='[Calculation_1]' role='dimension' type='nominal'>
+      <calculation class='tableau' formula='IFNULL([category_name],&apos;Other&apos;)'/>
+    </column>
+    <column caption='Custom SQL Query' datatype='table' name='[__tableau_internal_object_id__].[_ABCDEF]' role='measure' type='quantitative'/>
+    <column caption='State' datatype='string' name='[state]' role='dimension' semantic-role='[State].[Name]' type='nominal'/>
+  </datasource>
+</datasources>
+<dashboards>
+  <dashboard name='Dashboard 1'>
+    <size maxheight='800' maxwidth='1000'/>
+    <zones>
+      <zone h='100000' w='100000' x='0' y='0' type-v2='layout-basic'>
+        <zone h='8000' w='98000' x='1000' y='1000' type-v2='text'>
+          <formatted-text><run fontsize='16'>Businesses Without Websites</run></formatted-text>
+        </zone>
+        <zone h='60000' w='98000' x='1000' y='10000' name='Sheet 1'/>
+        <zone h='25000' w='98000' x='1000' y='72000' name='Sheet 2'/>
+      </zone>
+    </zones>
+  </dashboard>
+</dashboards>
+<worksheets>
+  <worksheet name='Sheet 1'><table><view>
+    <datasources><datasource name='federated.m'/></datasources>
+  </view>
+  <panes><pane><mark class='Automatic'/><encodings>
+    <lod column='[federated.m].[none:state:nk]'/>
+    <color column='[federated.m].[__tableau_internal_object_id__].[cnt:_ABCDEF:qk]'/>
+    <geometry column='[federated.m].[Geometry (generated)]'/>
+  </encodings></pane></panes>
+  <rows>[federated.m].[Latitude (generated)]</rows>
+  <cols>[federated.m].[Longitude (generated)]</cols>
+  </table></worksheet>
+  <worksheet name='Sheet 2'><table><view>
+    <datasources><datasource name='federated.m'/></datasources>
+    <shelf-sorts>
+      <shelf-sort-v2 dimension-to-sort='[federated.m].[none:industry:nk]' direction='DESC' measure-to-sort-by='[federated.m].[__tableau_internal_object_id__].[cnt:_ABCDEF:qk]' shelf='rows'/>
+    </shelf-sorts>
+  </view>
+  <panes><pane><mark class='Automatic'/><style><style-rule element='mark'>
+    <format attr='mark-labels-show' value='true'/>
+  </style-rule></style></pane></panes>
+  <rows>[federated.m].[none:industry:nk]</rows>
+  <cols>[federated.m].[__tableau_internal_object_id__].[cnt:_ABCDEF:qk]</cols>
+  </table></worksheet>
+</worksheets>
+</workbook>"""
+    path = tmp_path / "map.twb"
+    path.write_text(twb, encoding="utf-8")
+    zip_bytes, result = transpile_to_pbip(path)
+    captions = {c.caption for c in result.calculated_fields}
+    assert "Count of Custom SQL Query" in captions
+    count = next(c for c in result.calculated_fields if c.caption == "Count of Custom SQL Query")
+    assert count.dax == "COUNTROWS('businesses (postgres)')"
+    assert count.dax_kind == "measure"
+    category = next(c for c in result.calculated_fields if c.caption == "Category")
+    assert "category_name" in (category.dax or "")
+    assert "BLANK()" not in (category.dax or "")
+    ds = result.datasources[0]
+    physical = {f.caption for f in ds.fields if not f.calculated}
+    assert "category_name" in physical and "industry" in physical
+    assert "Custom SQL Query" not in physical
+    assert result.worksheets[0].has_geometry is True
+
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as zf:
+        visuals = [
+            json.loads(zf.read(n))
+            for n in zf.namelist()
+            if n.endswith("visual.json")
+        ]
+        pages = json.loads(next(zf.read(n) for n in zf.namelist() if n.endswith("pages/pages.json")))
+        page_blobs = [
+            json.loads(zf.read(n))
+            for n in zf.namelist()
+            if n.endswith("page.json")
+        ]
+        table = next(
+            zf.read(n).decode("utf-8")
+            for n in zf.namelist()
+            if n.endswith(".tmdl") and "/tables/" in n and "Measures" not in n
+        )
+    assert "Custom SQL Query" not in table.split("measure")[0]
+    assert "dataCategory: StateOrProvince" in table
+    assert "column category_name" in table
+    types = {v["visual"]["visualType"] for v in visuals}
+    assert "filledMap" in types
+    assert "clusteredBarChart" in types
+    assert "textbox" in types
+    filled = next(v for v in visuals if v["visual"]["visualType"] == "filledMap")
+    loc = filled["visual"]["query"]["queryState"]["Category"]["projections"][0]
+    assert loc["field"]["Column"]["Property"] == "State"
+    color = filled["visual"]["query"]["queryState"]["Y"]["projections"][0]
+    assert color["field"]["Measure"]["Property"] == "Count of Custom SQL Query"
+    bars = next(v for v in visuals if v["visual"]["visualType"] == "clusteredBarChart")
+    bar_cat = bars["visual"]["query"]["queryState"]["Category"]["projections"][0]
+    assert bar_cat["field"]["Column"]["Property"] == "industry"
+    assert bars["visual"]["query"]["sortDefinition"]["sort"][0]["direction"] == "Descending"
+    assert "labels" in bars["visual"]["objects"]
+    assert any(p.get("displayName") == "Dashboard 1" for p in page_blobs)
+    assert len(pages["pageOrder"]) == 1
 
 
 def test_tmdl_parse_smoke() -> None:

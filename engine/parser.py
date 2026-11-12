@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import math
 import zipfile
 from pathlib import Path
 from typing import BinaryIO
@@ -201,6 +202,17 @@ def _hidden_flag(el: ET.Element) -> bool:
     return raw in {"true", "1", "yes"}
 
 
+def _extract_is_enabled(ds: ET.Element) -> bool:
+    """True when this datasource reads a Tableau extract rather than the live source."""
+
+    for el in ds.iter():
+        if _local_tag(el.tag) != "extract":
+            continue
+        enabled = (el.get("enabled") or "true").strip().lower()
+        return enabled not in {"false", "0", "no"}
+    return False
+
+
 def _parse_connection(el: ET.Element) -> ConnectionInfo:
     return ConnectionInfo(
         class_name=redact_connect_fragment(el.get("class")),
@@ -209,6 +221,8 @@ def _parse_connection(el: ET.Element) -> ConnectionInfo:
         filename=redact_connect_fragment(el.get("filename")),
         username=redact_connect_fragment(el.get("username") or el.get("user")),
         password=redact_password_attr(el.get("password")),
+        port=redact_connect_fragment(el.get("port")),
+        sslmode=redact_connect_fragment(el.get("sslmode")),
         warehouse=redact_connect_fragment(el.get("warehouse")),
         schema_name=redact_connect_fragment(el.get("schema")),
     )
@@ -531,6 +545,7 @@ def _parse_datasource(
         connections=connections,
         relations=relations,
         fields=fields,
+        extract_enabled=_extract_is_enabled(ds),
     )
     return info, calculated, name_map, parameters, fields
 
@@ -1022,11 +1037,101 @@ def _parse_worksheets(root: ET.Element) -> list[WorksheetInfo]:
                     slicer_filters=slicer_filters,
                     number_formats=number_formats,
                     has_geometry=has_geometry,
+                    **_map_view(el),
+                    **_sheet_chrome(el),
                     **_worksheet_formatting(el),
                 )
             )
         )
     return sheets
+
+
+# EPSG:3857 Earth radius (metres). Tableau stores the X axis shifted by one
+# world width, so longitudes in the Americas come out positive.
+_MERCATOR_R = 6378137.0
+_MERCATOR_CIRC = 2 * math.pi * _MERCATOR_R
+
+
+def _mercator_to_degrees(x: float, y: float) -> tuple[float, float]:
+    """Return ``(latitude, longitude)`` for a Tableau EPSG:3857 axis value."""
+
+    if x > _MERCATOR_CIRC / 2:
+        x -= _MERCATOR_CIRC
+    longitude = math.degrees(x / _MERCATOR_R)
+    latitude = math.degrees(2 * math.atan(math.exp(y / _MERCATOR_R)) - math.pi / 2)
+    return latitude, longitude
+
+
+def _map_view(ws: ET.Element) -> dict[str, float | bool | None]:
+    """Fixed viewport and whether base-map place names are switched on.
+
+    A filled map in Tableau stores the window as Web Mercator ``min``/``max`` on
+    the generated latitude and longitude axes. Power BI otherwise fits every
+    geocoded place, so a few rows outside the United States zoom the map out
+    to the world.
+    """
+
+    west = south = east = north = None
+    for el in ws.iter():
+        if _local_tag(el.tag) != "encoding" or el.get("attr") != "space":
+            continue
+        if (el.get("range-type") or "").lower() != "fixed":
+            continue
+        if (el.get("projection") or "EPSG:3857").upper() not in {"EPSG:3857", "MERCATOR"}:
+            continue
+        field = (el.get("field") or "").lower()
+        try:
+            lo = float(el.get("min") or "")
+            hi = float(el.get("max") or "")
+        except ValueError:
+            continue
+        if "longitude" in field:
+            _lat_lo, west = _mercator_to_degrees(lo, 0.0)
+            _lat_hi, east = _mercator_to_degrees(hi, 0.0)
+        elif "latitude" in field:
+            south, _lon_lo = _mercator_to_degrees(0.0, lo)
+            north, _lon_hi = _mercator_to_degrees(0.0, hi)
+    label_flags: list[bool] = []
+    for el in ws.iter():
+        if _local_tag(el.tag) != "format" or el.get("attr") != "enabled":
+            continue
+        layer = (el.get("id") or "").lower()
+        if "label" not in layer:
+            continue
+        label_flags.append((el.get("value") or "").lower() == "true")
+    return {
+        "map_west": west,
+        "map_south": south,
+        "map_east": east,
+        "map_north": north,
+        "map_place_labels": any(label_flags) if label_flags else True,
+    }
+
+
+def _sheet_chrome(ws: ET.Element) -> dict[str, str | bool | None]:
+    """Palette, field-label, and value-axis choices authored on the sheet."""
+
+    palette: str | None = None
+    show_field_labels = True
+    hide_value_axis = False
+    for el in ws.iter():
+        tag = _local_tag(el.tag)
+        if tag == "encoding" and el.get("attr") == "color" and el.get("palette"):
+            palette = palette or el.get("palette")
+        if tag != "format":
+            continue
+        attr = el.get("attr") or ""
+        value = (el.get("value") or "").lower()
+        scope = el.get("scope") or ""
+        if attr == "display-field-labels" and scope == "rows" and value == "false":
+            show_field_labels = False
+        if attr == "display" and scope == "cols" and value == "false":
+            hide_value_axis = True
+    return {
+        "color_palette": palette,
+        "show_field_labels": show_field_labels,
+        "hide_value_axis": hide_value_axis,
+    }
 
 
 def _labels_shown(ws: ET.Element) -> bool:

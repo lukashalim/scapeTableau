@@ -35,6 +35,8 @@ class ConnectionInfo(BaseModel):
     filename: str | None = None
     username: str | None = None
     password: str | None = None
+    port: str | None = None
+    sslmode: str | None = None
     warehouse: str | None = None
     schema_name: str | None = Field(default=None, alias="schema")
 
@@ -171,6 +173,19 @@ class WorksheetInfo(BaseModel):
     number_formats: dict[str, str] = Field(default_factory=dict)
     # Geometry encoding on a generated lat/long sheet: Tableau is drawing polygons (a filled map).
     has_geometry: bool = False
+    # Fixed map viewport in degrees, from a Tableau axis with range-type="fixed".
+    map_west: float | None = None
+    map_south: float | None = None
+    map_east: float | None = None
+    map_north: float | None = None
+    # Country and state names drawn on the base map. Tableau can switch those layers off.
+    map_place_labels: bool = True
+    # Interpolated colour palette on the Colour shelf, e.g. tableau-map-blue-green.
+    color_palette: str | None = None
+    # ``display-field-labels`` on rows. Hides the "Industry" axis title.
+    show_field_labels: bool = True
+    # The value axis ``display`` format. Tableau turns the bar axis off and keeps the labels.
+    hide_value_axis: bool = False
 
 
 class MeasureNamesUsage(BaseModel):
@@ -234,6 +249,9 @@ class DatasourceInfo(BaseModel):
     connections: list[ConnectionInfo] = Field(default_factory=list)
     relations: list[RelationInfo] = Field(default_factory=list)
     fields: list[ColumnField] = Field(default_factory=list)
+    # Tableau ``<extract enabled="true">``. The workbook is reading the extract,
+    # so the original database connection is not the data source to keep.
+    extract_enabled: bool = False
 
 
 class CalculatedField(BaseModel):

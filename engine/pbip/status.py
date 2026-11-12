@@ -175,11 +175,12 @@ _MARK_MAPPING: dict[str, dict[str, tuple[str, str]]] = {
         "tableEx": (PARTIAL, "Tableau 'Automatic' resolved from shelf contents"),
         "map": (PARTIAL, "Symbol map inferred from generated latitude and longitude"),
         "filledMap": (PARTIAL, "Filled map inferred from a geometry encoding"),
+        "shapeMap": (PARTIAL, "State polygons drawn with the USA shape map"),
     },
     "pie": {"pieChart": (FULL, "")},
     "text": {"tableEx": (FULL, ""), "card": (FULL, ""), "multiRowCard": (FULL, "")},
-    "multipolygon": {"filledMap": (FULL, "")},
-    "polygon": {"filledMap": (FULL, "")},
+    "multipolygon": {"filledMap": (FULL, ""), "shapeMap": (FULL, "")},
+    "polygon": {"filledMap": (FULL, ""), "shapeMap": (FULL, "")},
     "map": {
         "map": (PARTIAL, "Symbol map; marks/size not carried over"),
         "filledMap": (PARTIAL, "Symbol map shown as filled map"),
@@ -248,7 +249,7 @@ def _shelf_rows(
             name = _nm(raw, lookup)
             tableau = f"{shelf}: {name}"
             if _is_generated_geo(raw):
-                if o.visual_type in {"filledMap", "map"}:
+                if o.visual_type in {"filledMap", "map", "shapeMap"}:
                     rows.append(ElementStatus(
                         "Shelf field", tableau, f"{o.visual_type} geocoding", FULL,
                         "Tableau's generated lat/long replaced by Location geocoding",

@@ -8,6 +8,7 @@ pbir-utils — field binding is filled here.
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from pathlib import Path
@@ -258,6 +259,7 @@ _AGG_CAPABLE = {
     "pivotTable",
     "filledMap",
     "map",
+    "shapeMap",
 }
 # Visuals with a legend/Series well that a Tableau Color dimension can feed
 _SERIES_VISUALS = {
@@ -343,6 +345,20 @@ def _scatter_order(
     ordered = sorted(measures, key=lambda m: rank.get(m, 999))
     ordered_agg = dict(sorted(agg_columns.items(), key=lambda kv: rank.get(kv[0], 999)))
     return ordered, ordered_agg
+
+
+def _is_state_location(name: str | None) -> bool:
+    return (name or "").strip().lower() in {"state", "province", "state or province", "state/province"}
+
+
+def _integer_label_format(ws: WorksheetInfo) -> bool:
+    """True when Tableau asked for grouped digits and no decimal or thousands suffix."""
+
+    for fmt in ws.number_formats.values():
+        body = fmt.lstrip("*")
+        if "#,##0" in body or body in {"#,0", "#,##0"}:
+            return True
+    return False
 
 
 def _choose_visual_type(
@@ -469,9 +485,10 @@ def _build_visual_json(
     elif visual_type == "card" and agg_columns:
         col, fn = next(iter(agg_columns.items()))
         query_state = {"Values": {"projections": [_aggregated_projection(entity, col, fn)]}}
-    elif visual_type in {"filledMap", "map"}:
-        # Location = Category; the first measure drives color (filled) or bubble size (symbol map)
-        value_role = "Y" if visual_type == "filledMap" else "Size"
+    elif visual_type in {"filledMap", "map", "shapeMap"}:
+        # Location = Category. Filled and shape maps colour by the measure (Y).
+        # A symbol map uses that measure as the bubble size.
+        value_role = "Size" if visual_type == "map" else "Y"
         value_projs = [_projection(entity, m, measure=True) for m in measures[:1]]
         if not value_projs:
             value_projs = [
@@ -905,11 +922,61 @@ def _luminance(color: str) -> float:
     return 0.299 * r + 0.587 * g + 0.114 * b
 
 
+def _apply_map_gradient(objects: dict, body: dict) -> None:
+    """Tableau's map blue-green: pale yellow for low counts, teal for high."""
+
+    projections = ((body.get("query") or {}).get("queryState") or {}).get("Y", {}).get("projections") or []
+    if not projections or not projections[0].get("field"):
+        return
+    objects["dataPoint"] = [
+        {
+            "properties": {
+                "fill": {
+                    "solid": {"color": {"expr": _gradient(projections[0]["field"], "#2E9B96", low="#F4F6C8")}}
+                }
+            }
+        }
+    ]
+
+
+def _map_center_latitude(ws: WorksheetInfo) -> float:
+    """Latitude at the middle of the viewport in Web Mercator, not the arithmetic mean."""
+
+    def y_rad(lat: float) -> float:
+        return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+
+    mid = (y_rad(ws.map_south or 0) + y_rad(ws.map_north or 0)) / 2
+    return math.degrees(2 * math.atan(math.exp(mid)) - math.pi / 2)
+
+
+def _map_zoom(ws: WorksheetInfo, *, width: float, height: float) -> float:
+    """Bing zoom that fits the Tableau viewport in this visual.
+
+    Each zoom step halves the ground distance. The tile size is 256px.
+    """
+
+    def y_rad(lat: float) -> float:
+        return math.log(math.tan(math.pi / 4 + math.radians(max(min(lat, 85.0), -85.0)) / 2))
+
+    lng_frac = abs((ws.map_east or 0) - (ws.map_west or 0)) / 360 or 1
+    lat_frac = abs(y_rad(ws.map_north or 0) - y_rad(ws.map_south or 0)) / (2 * math.pi) or 1
+    # The layout size is in the 1920x1080 page. A zero size still needs a US-scale zoom.
+    px_w = width if width and width > 1 else 900
+    px_h = height if height and height > 1 else 500
+
+    def level(px: float, frac: float) -> float:
+        return math.log2(px / (256 * frac))
+
+    return max(1.0, min(level(px_w, lng_frac), level(px_h, lat_frac), 16.0))
+
+
 def _apply_formatting(
     visual: dict,
     ws: WorksheetInfo,
     *,
     series: str | None,
+    width: float | None = 0,
+    height: float | None = 0,
 ) -> list[str]:
     """Title, background, mark colour and data labels carried over from the worksheet."""
 
@@ -940,7 +1007,7 @@ def _apply_formatting(
     chart_types = {
         "clusteredBarChart", "clusteredColumnChart", "lineChart", "areaChart", "pieChart",
         "donutChart", "scatterChart", "hundredPercentStackedColumnChart",
-        "lineClusteredColumnComboChart", "stackedAreaChart", "filledMap", "map",
+        "lineClusteredColumnComboChart", "stackedAreaChart", "filledMap", "map", "shapeMap",
     }
     if (
         ws.mark_color
@@ -952,10 +1019,45 @@ def _apply_formatting(
     ):
         objects["dataPoint"] = [{"properties": {"fill": _solid(ws.mark_color)}}]
         applied.append("mark colour")
+    if vtype == "shapeMap":
+        objects["shape"] = [{"properties": {"map": _lit("'USA'")}}]
+        applied.append("USA shape map")
+        if (ws.color_palette or "") == "tableau-map-blue-green":
+            _apply_map_gradient(objects, body)
+            applied.append("blue-green palette")
+    if vtype == "filledMap" and None not in (ws.map_west, ws.map_south, ws.map_east, ws.map_north):
+        objects["mapControls"] = [
+            {
+                "properties": {
+                    "autoZoom": _lit("false"),
+                    "centerLatitude": _lit(f"{_map_center_latitude(ws):.4f}D"),
+                    "centerLongitude": _lit(f"{((ws.map_west or 0) + (ws.map_east or 0)) / 2:.4f}D"),
+                    "zoomLevel": _lit(f"{_map_zoom(ws, width=width, height=height):.2f}D"),
+                }
+            }
+        ]
+        applied.append("map extent")
+    if vtype == "filledMap" and not ws.map_place_labels:
+        objects["mapStyles"] = [{"properties": {"showLabels": _lit("false")}}]
+        applied.append("map place labels off")
     wants_labels = ws.show_labels or bool(ws.encodings.get("text"))
     if wants_labels and vtype in chart_types:
-        objects["labels"] = [{"properties": {"show": _lit("true")}}]
+        label_props: dict = {"show": _lit("true")}
+        if _integer_label_format(ws):
+            # 1 = None. Otherwise Power BI shortens 22745 to 22.7K.
+            label_props["labelDisplayUnits"] = _lit("1D")
+        objects["labels"] = [{"properties": label_props}]
         applied.append("data labels")
+    if vtype in {"clusteredBarChart", "clusteredColumnChart"}:
+        if not ws.show_field_labels:
+            objects["categoryAxis"] = [{"properties": {"showAxisTitle": _lit("false")}}]
+            applied.append("field labels off")
+        if ws.hide_value_axis:
+            objects["valueAxis"] = [{"properties": {"show": _lit("false")}}]
+            applied.append("value axis off")
+        if not ws.mark_color:
+            objects.setdefault("dataPoint", [{"properties": {"fill": _solid("#4E79A7")}}])
+            applied.append("Tableau blue")
     if not objects:
         body.pop("objects", None)
     if not containers:
@@ -963,13 +1065,13 @@ def _apply_formatting(
     return applied
 
 
-def _gradient(field: dict, high: str) -> dict:
+def _gradient(field: dict, high: str, low: str = "#FFFFFF") -> dict:
     return {
         "FillRule": {
             "Input": field,
             "FillRule": {
                 "linearGradient2": {
-                    "min": {"color": {"Literal": {"Value": "'#FFFFFF'"}}},
+                    "min": {"color": {"Literal": {"Value": f"'{low}'"}}},
                     "max": {"color": {"Literal": {"Value": f"'{high}'"}}},
                     "nullColoringStrategy": {"strategy": {"Literal": {"Value": "'asZero'"}}},
                 }
@@ -1187,6 +1289,11 @@ def _worksheet_visual(
     vtype = _choose_visual_type(
         ws, len(dims), len(measures) + len(agg_columns), temporal=temporal
     )
+    # Bing's filled map paints every matched state one colour and leaves holes
+    # where a name does not geocode. A state polygon sheet is the USA shape map:
+    # each state is a real shape, coloured by the measure.
+    if vtype == "filledMap" and _is_state_location(location or (dims[0] if dims else None)):
+        vtype = "shapeMap"
     if agg_columns and vtype not in _AGG_CAPABLE:
         vtype = "tableEx"  # only these builders bind aggregated columns
     series: str | None = None
@@ -1276,7 +1383,7 @@ def _worksheet_visual(
                 if label and label[1]:
                     ws = ws.model_copy(update={"title": label[1]})
                     break
-        formatting = _apply_formatting(visual, ws, series=series)
+        formatting = _apply_formatting(visual, ws, series=series, width=width, height=height)
         for k, v in _apply_color_encoding(
             visual, ws, result, model_columns, model_measures, dims, measures, series
         ).items():
@@ -1329,7 +1436,7 @@ def _worksheet_visual(
         dims=list(dims[:4]),
         measures=list(measures[:4]),
         agg_columns=dict(agg_columns) if final_type != "tableEx" else {},
-        location=location if final_type in {"filledMap", "map"} else None,
+        location=location if final_type in {"filledMap", "map", "shapeMap"} else None,
         applied_filters=[f["field"]["Column"]["Property"] for f in ws_filters],
         dropped=dropped,
         added_fields=added_fields,

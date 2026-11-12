@@ -814,6 +814,19 @@ def build_pbip_zip(
     return buf.getvalue()
 
 
+def _owned_output(rel: str) -> bool:
+    """True for a path this converter writes. Other files in the folder stay put."""
+
+    name = rel.split("/", 1)[0]
+    return (
+        name in {".gitignore", "CONVERSION_REPORT.md", "CONVERSION_STATUS.md", "conversion_status.json"}
+        or name == "Data"
+        or name.endswith(".pbip")
+        or name.endswith(".Report")
+        or name.endswith(".SemanticModel")
+    )
+
+
 def write_pbip_dir(
     result: TranspileResult,
     dest: Path,
@@ -834,6 +847,24 @@ def write_pbip_dir(
                 'expression DataFolder = "Data" meta',
                 f'expression DataFolder = "{data_dir}" meta',
             )
+    written = {Path(path).as_posix() for path in files}
+    # Each conversion mints a new page id. Writing over the same folder used to
+    # leave the previous page directories in place, and Desktop shows every
+    # page.json it finds, so one dashboard turned into several identical tabs.
+    if dest.exists():
+        for existing in dest.rglob("*"):
+            if not existing.is_file():
+                continue
+            rel = existing.relative_to(dest).as_posix()
+            if rel not in written and _owned_output(rel):
+                existing.unlink()
+        for directory in sorted(
+            (p for p in dest.rglob("*") if p.is_dir()),
+            key=lambda p: len(p.parts),
+            reverse=True,
+        ):
+            if not any(directory.iterdir()):
+                directory.rmdir()
     for path, content in files.items():
         target = dest / path
         target.parent.mkdir(parents=True, exist_ok=True)

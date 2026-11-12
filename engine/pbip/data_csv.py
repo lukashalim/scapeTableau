@@ -14,6 +14,7 @@ from pathlib import Path
 
 from engine.hyper import hyper_conversion_enabled, read_hyper_bytes
 from engine.parser import Source, _is_zip, _read_bytes, is_hyper_bytes, list_archive_members
+from engine.pbip.m_partitions import keeps_live_database
 from engine.schema import DatasourceInfo, JoinInfo, RelationInfo, TranspileResult
 
 _SAFE = re.compile(r"[^A-Za-z0-9._ -]+")
@@ -584,10 +585,12 @@ def collect_data_csvs(
 ) -> tuple[dict[str, bytes], list[str], dict[str, list[str]]]:
     """Return ``Data/<table>.csv`` bytes, notes, and headers used per table name.
 
-    Always writes a CSV per non-Parameters datasource (header-only if extract
-    unavailable). Prefer embedded CSV/TSV from the package, then Hyper rows
-    when ``tableauhyperapi`` is available. Custom SQL is materialized from
-    Orders.csv when the query is a simple region filter.
+    Writes a CSV for each non-Parameters datasource that is a file or an extract
+    (header-only if the extract cannot be read). A live database connection is
+    left as a connector and does not get a CSV stand-in. Prefer embedded
+    CSV/TSV from the package, then Hyper rows when ``tableauhyperapi`` is
+    available. Custom SQL against a file is materialized from Orders.csv when
+    the query is a simple region filter.
     """
 
     notes: list[str] = []
@@ -659,6 +662,12 @@ def collect_data_csvs(
         table_name = table_names.get(ds.name) or (ds.caption or ds.name or "Table")
         csv_name = safe_csv_filename(table_name)
         zip_path = f"Data/{csv_name}"
+        if keeps_live_database(ds):
+            notes.append(
+                f"'{table_name}' keeps its live database connection; "
+                f"Data/{csv_name} was not written."
+            )
+            continue
         headers = _headers_for_ds(ds)
         rel = _primary_relation(ds)
 

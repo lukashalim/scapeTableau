@@ -195,6 +195,230 @@ def _csv_plan(
     )
 
 
+_LIVE_DB_CLASSES = {"postgres", "postgresql", "sqlserver"}
+_EXTRACT_CLASSES = {"hyper", "sqlproxy"}
+_FILE_CLASSES = {"textscan", "text", "csv", "excel-direct"}
+_SSL_REQUIRED = {"require", "verify-ca", "verify-full", "true", "yes"}
+
+
+def _class_name(conn: ConnectionInfo | None) -> str:
+    return ((conn.class_name if conn else None) or "").lower()
+
+
+def _is_extract_connection(conn: ConnectionInfo) -> bool:
+    if _class_name(conn) in _EXTRACT_CLASSES:
+        return True
+    name = (conn.dbname or conn.filename or "").lower()
+    return name.endswith(".hyper")
+
+
+def _is_file_connection(conn: ConnectionInfo | None) -> bool:
+    if conn is None:
+        return False
+    if _class_name(conn) in _FILE_CLASSES:
+        return True
+    filename = (conn.filename or "").lower()
+    return filename.endswith((".csv", ".txt", ".tsv", ".xlsx", ".xls"))
+
+
+def keeps_live_database(ds: DatasourceInfo) -> bool:
+    """True when the partition should be a database connector, not a CSV."""
+
+    return _live_db_connection(ds) is not None
+
+
+def _live_db_connection(ds: DatasourceInfo) -> ConnectionInfo | None:
+    """Database connection to preserve when the workbook is not using an extract."""
+
+    if ds.extract_enabled:
+        return None
+    live = [c for c in ds.connections if _class_name(c) in _LIVE_DB_CLASSES]
+    return live[0] if live else None
+
+
+def _server_host(conn: ConnectionInfo | None) -> str:
+    """Hostname only. Connection strings can carry ``;PWD=`` and that stays out."""
+
+    raw = ((conn.server if conn else None) or "localhost").strip()
+    host = raw.split(";")[0].strip()
+    host = re.sub(r"(?i)^tcp:", "", host)
+    return host or "localhost"
+
+
+def _server_endpoint(conn: ConnectionInfo | None) -> str:
+    host = _server_host(conn)
+    port = ((conn.port if conn else None) or "").strip()
+    if port and f":{port}" not in host:
+        return f"{host}:{port}"
+    return host
+
+
+def _database_name(conn: ConnectionInfo | None) -> str:
+    raw = ((conn.dbname if conn else None) or "database").strip()
+    name = raw.split(";")[0].strip()
+    if not name or name.lower().endswith(".hyper"):
+        return "database"
+    return name
+
+
+def _credential_note(conn: ConnectionInfo, host: str, dbname: str, table_name: str, engine: str) -> str:
+    user = (conn.username or "").strip()
+    sign_in = f" Sign in as {user}." if user else " Sign in when Desktop asks."
+    ssl = (conn.sslmode or "").strip().lower()
+    encrypt = " Turn on Encrypt connection." if ssl in _SSL_REQUIRED else ""
+    return (
+        f"{engine} connection for '{table_name}' stays live ({host} / {dbname})."
+        f"{sign_in}{encrypt} The password is not stored in the project."
+    )
+
+
+def _param_expr(value: str) -> str:
+    return f'{m_text_literal(value)} meta [IsParameterQuery=true, Type="Text"]'
+
+
+def _schema_table(raw: str | None, default_schema: str, table_name: str) -> tuple[str, str]:
+    parts = re.findall(r"\[([^\]]+)\]", raw or "") or [table_name]
+    schema = parts[0] if len(parts) > 1 else default_schema
+    table = parts[-1]
+    return schema.replace('"', '""'), table.replace('"', '""')
+
+
+def _local_column_name(raw: str | None) -> str:
+    text = (raw or "").strip()
+    if "].[" in text:
+        text = text.split("].[")[-1]
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    return text
+
+
+def _caption_renames(ds: DatasourceInfo) -> list[tuple[str, str]]:
+    """Query names that differ from the Tableau caption.
+
+    Postgres folds an unquoted ``state`` to lowercase. The model column is the
+    caption (``State``). ``Table.TransformColumnTypes`` is case-sensitive, so
+    the load fails with "column 'State' wasn't found" unless the result is
+    renamed first.
+    """
+
+    renames: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for field in ds.fields:
+        if field.calculated or (field.datatype or "").lower() == "table":
+            continue
+        if "__tableau_internal_object_id__" in (field.name or ""):
+            continue
+        caption = (field.caption or field.name or "").strip("[]")
+        local = _local_column_name(field.name)
+        if not caption or not local:
+            continue
+        for source in (local, local.lower()):
+            pair = (source, caption)
+            if source != caption and pair not in seen:
+                seen.add(pair)
+                renames.append(pair)
+    return renames
+
+
+def _rename_list(renames: list[tuple[str, str]]) -> str:
+    parts = []
+    for src, dst in renames:
+        parts.append(
+            f'{{"{src.replace(chr(34), chr(34) * 2)}", "{dst.replace(chr(34), chr(34) * 2)}"}}'
+        )
+    return "{" + ", ".join(parts) + "}"
+
+
+def _typed_live_query(connector: str, transforms: str, renames: list[tuple[str, str]]) -> str:
+    rename_expr = _rename_list(renames)
+    if rename_expr == "{}":
+        return f"""let
+    Source = {connector},
+    Typed = if {transforms} = null then Source else Table.TransformColumnTypes(Source, {transforms})
+in
+    Typed"""
+    return f"""let
+    Source = {connector},
+    Renamed = Table.RenameColumns(Source, {rename_expr}, MissingField.Ignore),
+    Typed = if {transforms} = null then Renamed else Table.TransformColumnTypes(Renamed, {transforms})
+in
+    Typed"""
+
+
+def _live_db_plan(
+    conn: ConnectionInfo,
+    rel: RelationInfo | None,
+    *,
+    table_name: str,
+    transforms: str,
+    renames: list[tuple[str, str]] | None = None,
+) -> MPartitionPlan:
+    """Power Query connector for a live Postgres or SQL Server source.
+
+    Credentials stay in Desktop's prompt. The password attribute and any
+    ``PWD=`` fragment on the server string are never written into the project.
+    """
+
+    cls = _class_name(conn)
+    host = _server_endpoint(conn)
+    dbname = _database_name(conn)
+    p_server = _safe_param(f"{table_name}_Server")
+    p_db = _safe_param(f"{table_name}_Database")
+    params = [
+        (p_server, "text", _param_expr(host)),
+        (p_db, "text", _param_expr(dbname)),
+    ]
+    engine = "SQL Server" if cls == "sqlserver" else "Postgres"
+    renames = renames or []
+    if rel and rel.custom_sql:
+        sql_lit = m_text_literal(rel.custom_sql)
+        if cls == "sqlserver":
+            connector = f"Sql.Database({p_server}, {p_db}, [Query={sql_lit}])"
+            kind = "sqlserver"
+        else:
+            connector = f"PostgreSQL.Database({p_server}, {p_db}, [Query={sql_lit}])"
+            kind = "postgres"
+        return MPartitionPlan(
+            kind,
+            _typed_live_query(connector, transforms, renames),
+            params,
+            [_credential_note(conn, host, dbname, table_name, f"{engine} custom SQL")],
+        )
+
+    default_schema = "dbo" if cls == "sqlserver" else "public"
+    schema, table = _schema_table(rel.table if rel else None, default_schema, table_name)
+    rename_expr = _rename_list(renames)
+    renamed = (
+        f"""    Renamed = Table.RenameColumns(Nav, {rename_expr}, MissingField.Ignore),
+"""
+        if rename_expr != "{}"
+        else ""
+    )
+    typed_from = "Renamed" if renamed else "Nav"
+    if cls == "sqlserver":
+        expr = f"""let
+    Source = Sql.Database({p_server}, {p_db}),
+    Nav = Source{{[Schema="{schema}", Item="{table}"]}}[Data],
+{renamed}    Typed = if {transforms} = null then {typed_from} else Table.TransformColumnTypes({typed_from}, {transforms})
+in
+    Typed"""
+        kind = "sqlserver"
+    else:
+        expr = f"""let
+    Source = PostgreSQL.Database({p_server}, {p_db}),
+    Nav = Source{{[Schema="{schema}", Item="{table}"]}}[Data],
+{renamed}    Typed = if {transforms} = null then {typed_from} else Table.TransformColumnTypes({typed_from}, {transforms})
+in
+    Typed"""
+        kind = "postgres"
+    return MPartitionPlan(
+        kind,
+        expr,
+        params,
+        [_credential_note(conn, host, dbname, table_name, engine)],
+    )
+
+
 def plan_m_partition(
     ds: DatasourceInfo,
     *,
@@ -205,176 +429,78 @@ def plan_m_partition(
     csv_text: str | None = None,
     inline_max_chars: int = INLINE_CSV_MAX_CHARS,
 ) -> MPartitionPlan:
-    """Plan an M partition for a Tableau datasource.
+    """Plan an M partition that follows the Tableau source.
 
-    ``prefer_csv=True`` (default) keeps file, Hyper, Custom SQL, and live
-    Postgres/SQL Server tables off live connectors. Small CSVs are embedded in
-    the M partition so Desktop shows rows after Apply changes. Larger CSVs use
-    ``DataFolder\\\\<table>.csv``. Pass ``prefer_csv=False`` to emit live DB
-    connectors instead.
+    A live Postgres or SQL Server connection stays a live connector. Desktop
+    asks for the password on refresh; it is not copied into the project.
+    An enabled extract, a Hyper or Tableau Server extract (``sqlproxy``), or a
+    file stays a CSV. Small CSVs are embedded in the M partition. Larger ones
+    use ``DataFolder\\\\<table>.csv``. ``prefer_csv`` does not turn a live
+    database into a file.
     """
 
     conn = _primary_connection(ds)
     rel = _primary_relation(ds)
-    notes: list[str] = []
-    params: list[tuple[str, str, str]] = []
-    cls = ((conn.class_name if conn else None) or "").lower()
+    cls = _class_name(conn)
     transforms = _type_transforms(column_types)
     csv_name = csv_filename or f"{table_name}.csv"
 
-    # Desktop-open path: always bind to the Data/ CSV we emit beside the .pbip.
-    if prefer_csv and (
-        (rel and rel.custom_sql)
-        or cls in {"postgres", "postgresql", "sqlserver", "sqlproxy", "hyper"}
-        or (
-            cls in {"textscan", "text", "csv", "excel-direct"}
-            or (conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv")))
-        )
-        or (conn and conn.dbname and str(conn.dbname).lower().endswith(".hyper"))
-        or column_types
-    ):
-        filename = Path(csv_name).name
-        if rel and rel.custom_sql:
-            note = (
-                f"Custom SQL for '{table_name}' materialized to DataFolder\\\\{filename} "
-                "(live DB skipped so Desktop opens without credentials)."
-            )
-            kind = "csv"
-        elif cls in {"postgres", "postgresql", "sqlserver", "sqlproxy"}:
-            note = (
-                f"Live {cls} table '{table_name}' → DataFolder\\\\{filename} "
-                "(offline CSV for Desktop open)."
-            )
-            kind = "csv"
-        elif cls == "hyper" or (conn and conn.dbname and str(conn.dbname).lower().endswith(".hyper")):
-            hyper_path = (conn.dbname if conn else None) or (conn.filename if conn else None) or "extract.hyper"
-            note = (
-                f"Hyper extract '{hyper_path}' → Data/{filename} via DataFolder "
-                "(rows when Hyper conversion is available; otherwise header-only)."
-            )
-            kind = "hyper"
-        elif cls in {"textscan", "text", "csv", "excel-direct"} or (
-            conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv"))
-        ):
-            note = f"CSV partition for '{table_name}' → DataFolder\\\\{filename}"
-            kind = "csv"
-        else:
-            note = (
-                f"Unknown connection class '{cls or 'none'}' for '{table_name}' — "
-                f"using DataFolder\\\\{filename} (header stub if no extract)."
-            )
-            kind = "unknown"
-        return _csv_plan(
+    live = _live_db_connection(ds)
+    if live is not None:
+        return _live_db_plan(
+            live,
+            rel,
             table_name=table_name,
-            csv_name=csv_name,
             transforms=transforms,
-            kind=kind,
-            note=note,
-            csv_text=csv_text,
-            inline_max_chars=inline_max_chars,
+            renames=_caption_renames(ds),
         )
 
-    if rel and rel.custom_sql:
-        server = (conn.server if conn else None) or "localhost"
-        dbname = (conn.dbname if conn else None) or "database"
-        # Strip redaction markers for parameter scaffolding; passwords stay out.
-        server_clean = server.split(";")[0]
-        p_server = _safe_param(f"{table_name}_Server")
-        p_db = _safe_param(f"{table_name}_Database")
-        params.append((p_server, "text", f'"{server_clean}" meta [IsParameterQuery=true, Type="Text"]'))
-        params.append((p_db, "text", f'"{dbname}" meta [IsParameterQuery=true, Type="Text"]'))
-        sql = (rel.custom_sql or "").replace('"', '""')
-        if cls in {"sqlserver", "sqlproxy"}:
-            connector = (
-                f'Sql.Database({p_server}, {p_db}, [Query="{sql}"])'
-            )
-            kind = "sqlserver"
-        else:
-            connector = (
-                f'PostgreSQL.Database({p_server}, {p_db}, [Query="{sql}"])'
-                if cls in {"postgres", "postgresql"}
-                else f'Value.NativeQuery(PostgreSQL.Database({p_server}, {p_db}), "{sql}", null, [EnableFolding=true])'
-            )
-            kind = "custom_sql" if cls not in {"postgres", "postgresql"} else "postgres"
-        expr = f"""let
-    Source = {connector},
-    Typed = if {transforms} = null then Source else Table.TransformColumnTypes(Source, {transforms})
-in
-    Typed"""
-        notes.append(f"Custom SQL / live query for '{table_name}' — bind credentials in Desktop.")
-        return MPartitionPlan(kind, expr, params, notes)
-
-    if cls in {"textscan", "text", "csv", "excel-direct"} or (
-        conn and conn.filename and str(conn.filename).lower().endswith((".csv", ".txt", ".tsv"))
-    ):
-        filename = Path(csv_name).name
-        notes.append(f"CSV partition for '{table_name}' → DataFolder\\\\{filename}")
-        return MPartitionPlan("csv", _csv_from_datafolder(filename, transforms), params, notes)
-
-    if cls in {"postgres", "postgresql"}:
-        server = ((conn.server if conn else None) or "localhost").split(";")[0]
-        dbname = (conn.dbname if conn else None) or "database"
-        schema_table = (rel.table if rel else None) or f"[public].[{table_name}]"
-        # Tableau [schema].[table] → schema/table
-        parts = re.findall(r"\[([^\]]+)\]", schema_table) or [table_name]
-        schema = parts[0] if len(parts) > 1 else "public"
-        table = parts[-1]
-        p_server = _safe_param(f"{table_name}_Server")
-        p_db = _safe_param(f"{table_name}_Database")
-        params.append((p_server, "text", f'"{server}" meta [IsParameterQuery=true, Type="Text"]'))
-        params.append((p_db, "text", f'"{dbname}" meta [IsParameterQuery=true, Type="Text"]'))
-        expr = f"""let
-    Source = PostgreSQL.Database({p_server}, {p_db}),
-    Nav = Source{{[Schema="{schema}", Item="{table}"]}}[Data],
-    Typed = if {transforms} = null then Nav else Table.TransformColumnTypes(Nav, {transforms})
-in
-    Typed"""
-        return MPartitionPlan("postgres", expr, params, ["Postgres live connection — set credentials in Desktop."])
-
-    if cls in {"sqlserver", "sqlproxy"}:
-        server = ((conn.server if conn else None) or "localhost").split(";")[0]
-        dbname = (conn.dbname if conn else None) or "database"
-        parts = re.findall(r"\[([^\]]+)\]", (rel.table if rel else None) or table_name) or [table_name]
-        schema = parts[0] if len(parts) > 1 else "dbo"
-        table = parts[-1]
-        p_server = _safe_param(f"{table_name}_Server")
-        p_db = _safe_param(f"{table_name}_Database")
-        params.append((p_server, "text", f'"{server}" meta [IsParameterQuery=true, Type="Text"]'))
-        params.append((p_db, "text", f'"{dbname}" meta [IsParameterQuery=true, Type="Text"]'))
-        expr = f"""let
-    Source = Sql.Database({p_server}, {p_db}),
-    Nav = Source{{[Schema="{schema}", Item="{table}"]}}[Data],
-    Typed = if {transforms} = null then Nav else Table.TransformColumnTypes(Nav, {transforms})
-in
-    Typed"""
-        return MPartitionPlan("sqlserver", expr, params, ["SQL Server live connection — set credentials in Desktop."])
-
-    if cls == "hyper" or (conn and conn.dbname and str(conn.dbname).lower().endswith(".hyper")):
-        hyper_path = (conn.dbname if conn else None) or (conn.filename if conn else None) or "extract.hyper"
-        filename = Path(csv_name).name
-        notes.append(
-            f"Hyper extract '{hyper_path}' → Data/{filename} via DataFolder "
-            "(rows when Hyper conversion is available; otherwise header-only)."
+    filename = Path(csv_name).name
+    extract_conns = [c for c in ds.connections if _is_extract_connection(c)]
+    if ds.extract_enabled or extract_conns:
+        hyper_path = next(
+            (
+                (c.dbname or c.filename)
+                for c in extract_conns
+                if c.dbname or c.filename
+            ),
+            "extract",
         )
-        return MPartitionPlan(
-            "hyper", _csv_from_datafolder(filename, transforms), params, notes
+        note = (
+            f"Extract '{hyper_path}' for '{table_name}' stays a CSV at Data/{filename} "
+            "(rows when the extract can be read; otherwise header-only)."
         )
-
-    # File-ish / unknown: still prefer DataFolder CSV when we emit Data/<table>.csv
-    if column_types:
-        filename = Path(csv_name).name
-        notes.append(
+        kind = "hyper"
+    elif _is_file_connection(conn):
+        note = f"CSV partition for '{table_name}' → DataFolder\\\\{filename}"
+        kind = "csv"
+    elif rel and rel.custom_sql:
+        note = (
+            f"Custom SQL for '{table_name}' materialized to DataFolder\\\\{filename} "
+            "(no live database connection on this datasource)."
+        )
+        kind = "csv"
+    elif prefer_csv or column_types:
+        note = (
             f"Unknown connection class '{cls or 'none'}' for '{table_name}' — "
             f"using DataFolder\\\\{filename} (header stub if no extract)."
         )
-        return MPartitionPlan(
-            "unknown", _csv_from_datafolder(filename, transforms), params, notes
-        )
-
-    notes.append(f"Unknown connection class '{cls or 'none'}' for '{table_name}' — empty typed stub.")
-    col_names = ", ".join(f'"{n}"' for n, _ in column_types) or '"Column1"'
-    expr = f"""let
+        kind = "unknown"
+    else:
+        notes = [f"Unknown connection class '{cls or 'none'}' for '{table_name}' — empty typed stub."]
+        col_names = ", ".join(f'"{n}"' for n, _ in column_types) or '"Column1"'
+        expr = f"""let
     Source = #table({{{col_names}}}, {{}})
 in
     Source"""
-    return MPartitionPlan("unknown", expr, params, notes)
+        return MPartitionPlan("unknown", expr, [], notes)
+
+    return _csv_plan(
+        table_name=table_name,
+        csv_name=csv_name,
+        transforms=transforms,
+        kind=kind,
+        note=note,
+        csv_text=csv_text,
+        inline_max_chars=inline_max_chars,
+    )

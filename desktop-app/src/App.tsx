@@ -5,7 +5,7 @@ import { SqlPane } from "./components/SqlPane";
 import { StatusBar } from "./components/StatusBar";
 import type { ConvertStatus, SqlDialect } from "../electron/types";
 
-type Tab = "extract" | "sql";
+type Tab = "extract" | "sql" | "pbip";
 
 function fileName(path: string | null): string | null {
   if (!path) return null;
@@ -14,7 +14,7 @@ function fileName(path: string | null): string | null {
 
 export default function App() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("extract");
+  const [tab, setTab] = useState<Tab>("pbip");
   const [status, setStatus] = useState<ConvertStatus>({ phase: "idle" });
   const [dialect, setDialect] = useState<SqlDialect>("ansi");
   const [sqlScript, setSqlScript] = useState("");
@@ -55,6 +55,12 @@ export default function App() {
       setSqlScript(result.sqlScript);
     }
   }, [dialect, selectedPath]);
+
+  const runPbip = useCallback(async () => {
+    if (!selectedPath) return;
+    const result = await window.biescape.pbip(selectedPath);
+    setStatus(result);
+  }, [selectedPath]);
 
   const onCopy = useCallback(async () => {
     if (!sqlScript) return;
@@ -118,7 +124,7 @@ export default function App() {
           />
 
           <p className="caption">
-            Extract to Excel · Transpile SQL locally · Works offline
+            Extract to Excel · SQL · Power BI project · Works offline
           </p>
 
           <div className="tabs" role="tablist" aria-label="Mode">
@@ -139,6 +145,15 @@ export default function App() {
               onClick={() => setTab("sql")}
             >
               SQL
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "pbip"}
+              className={`tab${tab === "pbip" ? " active" : ""}`}
+              onClick={() => setTab("pbip")}
+            >
+              Power BI
             </button>
           </div>
 
@@ -172,6 +187,22 @@ export default function App() {
             />
           )}
 
+          {tab === "pbip" && (
+            <div className="panel">
+              <button
+                type="button"
+                className="primary"
+                disabled={busy || !selectedPath}
+                onClick={() => void runPbip()}
+              >
+                Convert to .pbip…
+              </button>
+              <p className="caption tight">
+                Writes a folder you open in Power BI Desktop. .twb, .twbx, or .tdsx.
+              </p>
+            </div>
+          )}
+
           {status.phase === "converting" && (
             <div className="banner progress" role="status">
               <span className="spinner" aria-hidden="true" />
@@ -186,7 +217,7 @@ export default function App() {
             </div>
           )}
 
-          {status.phase === "success" && tab === "extract" && (
+          {status.phase === "success" && tab === "extract" && status.format !== "pbip" && (
             <div className="banner success" role="status">
               Saved {status.outputPath}
               {status.sheets.length > 0
@@ -195,9 +226,16 @@ export default function App() {
             </div>
           )}
 
-          {status.phase === "success" && tab === "sql" && (
+          {status.phase === "success" && tab === "sql" && status.format !== "pbip" && (
             <div className="banner success" role="status">
               Saved {status.outputPath}
+            </div>
+          )}
+
+          {status.phase === "success" && status.format === "pbip" && (
+            <div className="banner success" role="status">
+              Saved {status.outputPath}. Open that file in Power BI Desktop.
+              {status.notes.length > 0 ? ` ${status.notes[0]}` : ""}
             </div>
           )}
 

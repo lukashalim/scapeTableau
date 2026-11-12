@@ -22,6 +22,7 @@ from engine.transpiler import (
     FormulaContext,
     classify_dax_kind,
     classify_sql_kind,
+    dax_table_ident,
     field_references,
     normalize_table_name,
     parse_formula,
@@ -58,17 +59,25 @@ def _param_index(params: list[ParameterInfo]) -> dict[str, ParameterInfo]:
     return index
 
 
+def _pbi_table_name(ds) -> str:
+    """Power BI / DAX table name — same label the PBIP semantic model uses."""
+
+    from engine.audit import pbi_table_name
+
+    return pbi_table_name(ds)
+
+
 def _source_tables(workbook, datasource_name: str) -> tuple[str, str]:
-    """Return (sql_table, dax_table). DAX uses the relation name when present."""
+    """Return (sql_table, dax_table). DAX table matches the PBIP table (caption)."""
 
     from engine.audit import _hyper_file_stem, _is_generic_extract_table
     from engine.transpiler import split_tableau_ident
 
     for ds in workbook.datasources:
         if ds.name == datasource_name or (ds.caption or "") == datasource_name:
+            dax_table = _pbi_table_name(ds)
             for rel in ds.relations:
                 parts = split_tableau_ident(rel.table or rel.name)
-                dax_table = normalize_table_name(rel.name) or (parts[-1] if parts else "")
                 if parts and _is_generic_extract_table(parts):
                     sql_table = (
                         (ds.caption or "").strip()
@@ -79,10 +88,31 @@ def _source_tables(workbook, datasource_name: str) -> tuple[str, str]:
                 else:
                     sql_table = ".".join(parts) if parts else normalize_table_name(rel.name)
                 if sql_table or dax_table:
-                    return sql_table or "Orders", dax_table or sql_table or "Orders"
-            caption = (ds.caption or "").strip() or normalize_table_name(ds.name) or "Orders"
-            return caption, caption
+                    return sql_table or dax_table or "Orders", dax_table or sql_table or "Orders"
+            return dax_table, dax_table
     return "Orders", "Orders"
+
+
+def _known_columns_for_ds(workbook, datasource_name: str) -> set[str]:
+    """Captions / bare names of physical + calc columns on a datasource."""
+
+    out: set[str] = set()
+    for ds in workbook.datasources:
+        if ds.name != datasource_name and (ds.caption or "") != datasource_name:
+            continue
+        for col in ds.fields:
+            if col.caption:
+                out.add(col.caption.strip("[]"))
+            if col.name:
+                out.add(col.name.strip("[]"))
+        break
+    for raw in workbook.calculated_fields:
+        if raw.datasource_name == datasource_name or (raw.datasource_caption or "") == datasource_name:
+            if raw.caption:
+                out.add(raw.caption.strip("[]"))
+            if raw.name:
+                out.add(raw.name.strip("[]"))
+    return out
 
 
 def _calc_keys(name: str, caption: str) -> list[str]:
@@ -171,16 +201,53 @@ def transpile(
             raw = raw_by_ident[ident]
             current_keys = set(_calc_keys(raw.name, raw.caption))
 
-            if getattr(raw, "is_table_calc", False):
-                sheet = getattr(raw, "worksheet", None) or "worksheet"
-                msg = f"Worksheet table calculation on '{sheet}' (no SQL window emitted)"
-                sql = f"-- SKIPPED [table calc]: {raw.formula}"
-                dax = f"// SKIPPED [table calc]: {raw.formula}"
+            if getattr(raw, "is_row_count", False):
+                # CNT([Custom SQL Query]) counts the object-model table, not a column.
+                dax = f"COUNTROWS({dax_table_ident(dax_table)})"
+                sql = "COUNT(*)"
                 for key in current_keys:
                     calc_sql[key] = sql
                     calc_dax[key] = dax
-                    calc_status[key] = ParseStatus.skipped
-                    calc_dax_status[key] = ParseStatus.skipped
+                    calc_status[key] = ParseStatus.ok
+                    calc_dax_status[key] = ParseStatus.ok
+                    calc_dax_kind[key] = "measure"
+                    calc_sql_kind[key] = "aggregate"
+                fields.append(
+                    CalculatedField(
+                        name=raw.name,
+                        caption=raw.caption,
+                        datatype=raw.datatype or "integer",
+                        role="measure",
+                        formula=raw.formula,
+                        sql=sql,
+                        status=ParseStatus.ok,
+                        datasource=raw.datasource_caption or raw.datasource_name,
+                        dax=dax,
+                        dax_status=ParseStatus.ok,
+                        dax_kind="measure",
+                        sql_kind="aggregate",
+                    )
+                )
+                continue
+
+            if getattr(raw, "is_table_calc", False):
+                from engine.pbip.table_calcs import transpile_table_calc_formula
+
+                sheet = getattr(raw, "worksheet", None) or "worksheet"
+                sql = f"-- SKIPPED [table calc]: {raw.formula}"
+                mapped = transpile_table_calc_formula(raw.formula, dax_table=dax_table)
+                dax = mapped.dax
+                dax_status = mapped.status
+                sql_status = ParseStatus.skipped
+                msg = (
+                    f"Worksheet table calculation on '{sheet}' "
+                    f"({mapped.disposition}: {mapped.reason})"
+                )
+                for key in current_keys:
+                    calc_sql[key] = sql
+                    calc_dax[key] = dax
+                    calc_status[key] = sql_status
+                    calc_dax_status[key] = dax_status
                     calc_dax_kind[key] = "measure"
                 fields.append(
                     CalculatedField(
@@ -190,11 +257,12 @@ def transpile(
                         role=raw.role,
                         formula=raw.formula,
                         sql=sql,
+                        # SQL stays skipped; Stage 2 may still emit DAX measures.
                         status=ParseStatus.skipped,
                         datasource=raw.datasource_caption or raw.datasource_name,
                         error=msg,
                         dax=dax,
-                        dax_status=ParseStatus.skipped,
+                        dax_status=dax_status,
                         dax_kind="measure",
                         sql_kind=None,
                     )
@@ -213,6 +281,14 @@ def transpile(
                 if dst is not None and dst != ParseStatus.ok and dax_failed_dep is None:
                     dax_failed_dep = dep
 
+            known_cols = _known_columns_for_ds(workbook, ds_name)
+            window_dims: list[str] = []
+            for dim_raw in grain or []:
+                caption = name_map.get(dim_raw) or name_map.get(f"[{dim_raw}]") or dim_raw
+                if known_cols and caption not in known_cols:
+                    continue
+                if caption not in window_dims:
+                    window_dims.append(caption)
             ctx_sql = FormulaContext(
                 dialect=sql_dialect,
                 target="sql",
@@ -244,6 +320,8 @@ def transpile(
                 dax_table=dax_table,
                 current_keys=current_keys,
                 original_formula=resolved,
+                known_columns=known_cols or None,
+                window_dims=window_dims,
             )
 
             try:
@@ -310,13 +388,14 @@ def transpile(
                     dax_status=dax_status,
                     dax_kind=kind,
                     sql_kind=sql_kind,
+                    dax_notes=list(ctx_dax.missing_column_todos) + list(ctx_dax.window_notes),
                 )
             )
 
     fields = reject_mn_mv_calculated(fields)
     inspect = build_inspect(workbook, fields)
     inventory = build_inventory(workbook=workbook)
-    return assemble_result(
+    result = assemble_result(
         fields,
         workbook.datasources,
         workbook_name=workbook.workbook_name,
@@ -329,4 +408,8 @@ def transpile(
         parameters=workbook.parameters,
         measure_names=workbook.measure_names,
         workbook_fields=workbook.fields,
+        joins=workbook.joins,
+        worksheets=workbook.worksheets,
     )
+    result.name_maps = workbook.name_maps
+    return result

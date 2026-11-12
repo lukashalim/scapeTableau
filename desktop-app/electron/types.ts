@@ -8,6 +8,7 @@ export type ConvertStatus =
       outputPath: string;
       sheets: string[];
       notes: string[];
+      format?: "xlsx" | "pbip" | "sql";
     }
   | { phase: "error"; sourcePath?: string; error: string }
   | { phase: "analyzing"; sourcePath: string; dialect: string }

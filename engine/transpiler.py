@@ -50,6 +50,8 @@ ROW_FUNCS = {
     "ISNULL",
     "IIF",
 }
+# 'Table'[Column] or Table[Column]: the only argument shape DAX SUM/AVERAGE/... accept
+_BARE_DAX_COLUMN = re.compile(r"^(?:'(?:[^']|'')+'|[A-Za-z0-9_]+)\[[^\]]+\]$")
 DAX_ITER = {
     "SUM": "SUMX",
     "AVG": "AVERAGEX",
@@ -177,6 +179,20 @@ class Token:
     pos: int
 
 
+def dax_table_ident(name: str) -> str:
+    """Quote a DAX table name as ``'Table'`` (required when names have spaces)."""
+
+    cleaned = (name or "Table").strip() or "Table"
+    return "'" + cleaned.replace("'", "''") + "'"
+
+
+def dax_column_ref(table: str, column: str) -> str:
+    """Return ``'Table'[Column]``."""
+
+    col = (column or "Column").strip().strip("[]") or "Column"
+    return f"{dax_table_ident(table)}[{col}]"
+
+
 @dataclass
 class FormulaContext:
     dialect: str = "ansi"
@@ -193,6 +209,14 @@ class FormulaContext:
     dax_table: str = "Orders"
     current_keys: set[str] = field(default_factory=set)
     original_formula: str = ""
+    # When set, unknown columns become BLANK() and are appended to missing_column_todos.
+    known_columns: set[str] | None = None
+    missing_column_todos: list[str] = field(default_factory=list)
+    # Captions of the dimensions on the sheet that uses the calc; the first one is the
+    # partition/addressing field for RANK / WINDOW_* / RUNNING_* table calcs.
+    window_dims: list[str] = field(default_factory=list)
+    # Set when a table calc was approximated (shown as a note on the converted field)
+    window_notes: list[str] = field(default_factory=list)
 
 
 class TranspileFormulaError(Exception):
@@ -761,10 +785,11 @@ def _is_row_level_lod(node: LodExpr) -> bool:
 
 
 def _kind_combine(kinds: list[str]) -> str:
-    if "calculated_column" in kinds:
-        return "calculated_column"
+    # Prefer measure when any aggregate/LOD branch is present (Stage 2 Achieved Quota, etc.).
     if "measure" in kinds:
         return "measure"
+    if "calculated_column" in kinds:
+        return "calculated_column"
     return "calculated_column"
 
 
@@ -855,7 +880,11 @@ def classify_sql_kind(node: Node, ctx: FormulaContext | None = None) -> str:
 
 
 def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
-    """measure if the root is an agg/LOD; bare T[Col] anywhere → calculated_column."""
+    """Stage 2: agg/table-calc → measure; row-level → calculated_column.
+
+    IF/SWITCH that contain aggregations (e.g. Achieved Quota) are measures even when
+    parameter literals appear in the same expression.
+    """
 
     ctx = ctx or FormulaContext()
     if isinstance(node, LodExpr):
@@ -870,13 +899,18 @@ def classify_dax_kind(node: Node, ctx: FormulaContext | None = None) -> str:
         return "calculated_column"
     if isinstance(node, Call):
         fn = node.name.upper()
-        if fn in AGG_FUNCS:
+        if fn in AGG_FUNCS or _is_table_calc_name(fn):
             return "measure"
         if fn in ROW_FUNCS:
             return "calculated_column"
         kinds = [classify_dax_kind(arg, ctx) for arg in node.args]
         return _kind_combine(kinds)
     if isinstance(node, BinaryOp):
+        # Row-level boolean over FIXED LOD (e.g. Order Profitable?) → calculated column.
+        if node.op in {"=", "<>", ">", "<", ">=", "<="} and (
+            _has_lod(node.left) or _has_lod(node.right)
+        ):
+            return "calculated_column"
         return _kind_combine(
             [classify_dax_kind(node.left, ctx), classify_dax_kind(node.right, ctx)]
         )
@@ -1090,11 +1124,30 @@ class Emitter:
             return f"({self.ctx.calc_sql[key]})"
         return quote_ident(node.name, self.dialect)
 
+    def _dax_table_bare(self) -> str:
+        return (self.ctx.dax_table or self.ctx.source_table or "Orders").strip() or "Orders"
+
     def _dax_table(self) -> str:
-        return self.ctx.dax_table or self.ctx.source_table or "Orders"
+        """Quoted table ident for ALL / ALLEXCEPT / ALLSELECTED / SUMMARIZE / COUNTROWS."""
+
+        return dax_table_ident(self._dax_table_bare())
 
     def _dax_col(self, name: str) -> str:
-        return f"{self._dax_table()}[{name}]"
+        col = (name or "").strip().strip("[]") or "Column"
+        known = self.ctx.known_columns
+        if known is not None:
+            # Allow calc captions already in calc_dax / current formula keys
+            if (
+                col not in known
+                and col not in self.ctx.calc_dax
+                and col not in self.ctx.current_keys
+                and name not in self.ctx.calc_dax
+            ):
+                todo = f"Missing column '{col}' on table '{self._dax_table_bare()}' → BLANK()"
+                if todo not in self.ctx.missing_column_todos:
+                    self.ctx.missing_column_todos.append(todo)
+                return "BLANK()"
+        return dax_column_ref(self._dax_table_bare(), col)
 
     def _dax_field(self, node: FieldRef) -> str:
         key = node.name
@@ -1234,6 +1287,9 @@ class Emitter:
                 return self._dax_agg_over_lod(fn, inner)
         args = [self.emit_dax(a) for a in node.args]
         original = node.name
+        window = self._dax_window_call(fn, args)
+        if window is not None:
+            return window
         if fn == "IIF" or fn == "IF":
             if len(args) != 3:
                 raise TranspileFormulaError("IIF expects 3 arguments")
@@ -1241,11 +1297,11 @@ class Emitter:
         if fn == "ZN":
             if len(args) != 1:
                 raise TranspileFormulaError("ZN expects 1 argument")
-            return f"IF(ISBLANK({args[0]}), 0, {args[0]})"
+            return f"COALESCE({args[0]}, 0)"
         if fn == "IFNULL":
             if len(args) != 2:
                 raise TranspileFormulaError("IFNULL expects 2 arguments")
-            return f"IF(ISBLANK({args[0]}), {args[1]}, {args[0]})"
+            return f"COALESCE({args[0]}, {args[1]})"
         if fn == "ISNULL":
             if len(args) != 1:
                 raise TranspileFormulaError("ISNULL expects 1 argument")
@@ -1266,10 +1322,38 @@ class Emitter:
             if len(args) != 1:
                 raise TranspileFormulaError("LEN expects 1 argument")
             return f"LEN({args[0]})"
+        if (
+            fn in {"SUM", "AVG", "MIN", "MAX", "COUNT", "COUNTD"}
+            and len(args) == 1
+            and not _BARE_DAX_COLUMN.match(args[0].strip())
+            and not args[0].strip().endswith("[Number of Records]")
+        ):
+            # DAX SUM/AVERAGE/MIN/MAX/COUNT only take a column reference. A Tableau aggregate
+            # over an expression (SUM(IF cond THEN [Sales] END)) needs the row-wise iterator.
+            table = self._dax_table()
+            if fn == "COUNTD":
+                return f'COUNTROWS(DISTINCT(SELECTCOLUMNS({table}, "v", {args[0]})))'
+            return f"{DAX_ITER[fn]}({table}, {args[0]})"
         if fn == "COUNTD":
             if len(args) != 1:
                 raise TranspileFormulaError("COUNTD expects 1 argument")
             return f"DISTINCTCOUNT({args[0]})"
+        if fn == "COUNT":
+            if len(args) != 1:
+                raise TranspileFormulaError("COUNT expects 1 argument")
+            # Prefer COUNTROWS when counting a table grain marker
+            arg0 = args[0]
+            if arg0.endswith("[Number of Records]") or arg0.endswith("[_Number of Records]"):
+                table = arg0.split("[", 1)[0].rstrip()
+                return f"COUNTROWS({table})" if table else f"COUNT({arg0})"
+            return f"COUNT({arg0})"
+        if fn == "ATTR":
+            if len(args) != 1:
+                raise TranspileFormulaError("ATTR expects 1 argument")
+            col = args[0]
+            return f"IF(HASONEVALUE({col}), VALUES({col}), BLANK())"
+        if fn == "AVG":
+            return f"AVERAGE({', '.join(args)})"
         if fn in AGG_FUNCS or fn in PASSTHROUGH:
             return f"{fn}({', '.join(args)})"
         if fn == "TODAY":
@@ -1287,6 +1371,55 @@ class Emitter:
         self.partial = True
         self.unknown_functions.append(fn)
         return f"/* TODO: unmapped Tableau function {fn}: {self.ctx.original_formula or call} */ {call}"
+
+    _WINDOW_ITER = {"SUM": "SUMX", "AVG": "AVERAGEX", "MIN": "MINX", "MAX": "MAXX"}
+
+    def _dax_window_call(self, fn: str, args: list[str]) -> str | None:
+        """RANK / WINDOW_* / RUNNING_* / INDEX as per-sheet DAX over the sheet's first dimension.
+
+        Tableau resolves these along the view's addressing fields, so they are only
+        translated when the calc is used on a sheet with a dimension; otherwise the caller
+        falls back to the TODO marker.
+        """
+
+        is_rank = fn in {"RANK", "RANK_DENSE", "RANK_UNIQUE", "RANK_MODIFIED"}
+        is_window = fn in {"WINDOW_SUM", "WINDOW_AVG", "WINDOW_MIN", "WINDOW_MAX"}
+        is_running = fn in {"RUNNING_SUM", "RUNNING_AVG", "RUNNING_MIN", "RUNNING_MAX"}
+        if not (is_rank or is_window or is_running or fn == "INDEX"):
+            return None
+        if not self.ctx.window_dims:
+            return None
+        dim = dax_column_ref(self._dax_table_bare(), self.ctx.window_dims[0])
+        base = f"ALLSELECTED({dim})"
+        if fn == "INDEX":
+            self.ctx.window_notes.append(f"INDEX() approximated as the rank of [{self.ctx.window_dims[0]}]")
+            return f"RANKX({base}, {dim}, SELECTEDVALUE({dim}), ASC, DENSE)"
+        if not args:
+            return None
+        expr = args[0]
+        if is_rank:
+            ties = {"RANK": "SKIP", "RANK_DENSE": "DENSE", "RANK_UNIQUE": "SKIP", "RANK_MODIFIED": "SKIP"}[fn]
+            order = "ASC" if len(args) > 1 and "asc" in args[1].lower() else "DESC"
+            self.ctx.window_notes.append(
+                f"{fn} computed along [{self.ctx.window_dims[0]}] with RANKX over ALLSELECTED"
+            )
+            return f"RANKX({base}, CALCULATE({expr}), , {order}, {ties})"
+        agg = fn.split("_", 1)[1]
+        iterator = self._WINDOW_ITER[agg]
+        if is_window:
+            if len(args) > 1:
+                self.ctx.window_notes.append(f"{fn} offsets ignored; whole partition used")
+            self.ctx.window_notes.append(
+                f"{fn} computed along [{self.ctx.window_dims[0]}] over ALLSELECTED"
+            )
+            return f"{iterator}({base}, CALCULATE({expr}))"
+        self.ctx.window_notes.append(
+            f"{fn} computed as a cumulative total along [{self.ctx.window_dims[0]}]"
+        )
+        return (
+            f"VAR __cur = MAX({dim}) "
+            f"RETURN {iterator}(FILTER({base}, {dim} <= __cur), CALCULATE({expr}))"
+        )
 
     def _sql_date(self, fn: str, node: Call, args: list[str]) -> str | None:
         dialect = self.dialect
@@ -1604,12 +1737,13 @@ class Emitter:
                 return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
             excepts = ", ".join(self._dax_col(d) for d in dim_names)
             return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+        # INCLUDE / EXCLUDE require worksheet grain (raises IncludeExcludeGrainError).
+        grain = self._lod_grain(lod)
         if kind == "EXCLUDE":
             if not dim_names:
                 return inner
             rf = ", ".join(self._dax_col(d) for d in dim_names)
             return f"CALCULATE({inner}, REMOVEFILTERS({rf}))"
-        grain = self._lod_grain(lod)
         iter_fn = DAX_ITER.get(outer_fn, f"{outer_fn}X")
         table_expr = self._dax_summarize(grain)
         return f"{iter_fn}({table_expr}, CALCULATE({inner}))"
@@ -1626,13 +1760,15 @@ class Emitter:
                 return f"CALCULATE({inner}, ALL({table}))"
             excepts = ", ".join(self._dax_col(d) for d in dim_names)
             return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
-        if kind == "INCLUDE":
+        if kind in {"INCLUDE", "EXCLUDE"}:
+            # Stage 2: require worksheet grain for INCLUDE/EXCLUDE; else skip.
             grain = self._lod_grain(lod)
-            if not grain:
-                return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
-            excepts = ", ".join(self._dax_col(d) for d in grain)
-            return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
-        if kind == "EXCLUDE":
+            if kind == "INCLUDE":
+                if not grain:
+                    return f"CALCULATE({inner}, REMOVEFILTERS({table}))"
+                excepts = ", ".join(self._dax_col(d) for d in grain)
+                return f"CALCULATE({inner}, ALLEXCEPT({table}, {excepts}))"
+            # EXCLUDE
             if not dim_names:
                 return inner
             rf = ", ".join(self._dax_col(d) for d in dim_names)

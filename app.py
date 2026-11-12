@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
-from engine.vercel_fn import XLSX_TYPE, extract_payload, extract_upload, transpile_payload
+from engine.vercel_fn import (
+    PBIP_TYPE,
+    XLSX_TYPE,
+    extract_payload,
+    extract_upload,
+    pbip_payload,
+    transpile_payload,
+)
 
 _JSON = [(b"content-type", b"application/json; charset=utf-8")]
 _XLSX = [
     (b"content-type", XLSX_TYPE.encode("ascii")),
     (b"content-disposition", b'attachment; filename="scapetableau-extract.xlsx"'),
 ]
+_PBIP = [
+    (b"content-type", PBIP_TYPE.encode("ascii")),
+    (b"content-disposition", b'attachment; filename="escapetableau.pbip.zip"'),
+]
 _TRANSPILE_PATHS = {"/api/transpile", "/api/engine", "/transpile"}
 _EXTRACT_PATHS = {"/api/extract", "/extract"}
+_PBIP_PATHS = {"/api/pbip", "/pbip"}
 
 
 async def app(scope: dict, receive, send) -> None:
@@ -18,7 +30,7 @@ async def app(scope: dict, receive, send) -> None:
         return
     path = scope.get("path") or "/"
     method = (scope.get("method") or "GET").upper()
-    if method == "POST" and path in _TRANSPILE_PATHS | _EXTRACT_PATHS:
+    if method == "POST" and path in _TRANSPILE_PATHS | _EXTRACT_PATHS | _PBIP_PATHS:
         body = b""
         more = True
         while more:
@@ -32,6 +44,9 @@ async def app(scope: dict, receive, send) -> None:
         elif path in _EXTRACT_PATHS:
             status, payload, ctype = extract_payload(*upload)
             hdrs = _XLSX if ctype == XLSX_TYPE else _JSON
+        elif path in _PBIP_PATHS:
+            status, payload, ctype = pbip_payload(*upload)
+            hdrs = _PBIP if ctype == PBIP_TYPE else _JSON
         else:
             status, payload = transpile_payload(*upload)
             hdrs = _JSON

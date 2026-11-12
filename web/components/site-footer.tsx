@@ -1,7 +1,8 @@
 import Link from "next/link";
 
+import { DesktopDownloadLink, DESKTOP_INSTALL_WARNING } from "@/components/desktop-download-link";
 import { buttonVariants } from "@/components/ui/button";
-import { DESKTOP_RELEASE_URL, GITHUB_URL, LANDING_PAGES, SITE_URL } from "@/lib/site";
+import { GITHUB_URL, LANDING_PAGES, SITE_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 export function SiteFooter() {
@@ -19,14 +20,9 @@ export function SiteFooter() {
           <Link href="/#converter" className={cn(buttonVariants({ size: "lg" }))}>
             Try the Web App
           </Link>
-          <a
-            href={DESKTOP_RELEASE_URL}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(buttonVariants({ size: "lg" }))}
-          >
+          <DesktopDownloadLink newTab className={cn(buttonVariants({ size: "lg" }))}>
             Download Windows installer
-          </a>
+          </DesktopDownloadLink>
           <a
             href={GITHUB_URL}
             target="_blank"
@@ -36,6 +32,7 @@ export function SiteFooter() {
             Clone the repo
           </a>
         </div>
+        <p className="text-xs text-muted-foreground">{DESKTOP_INSTALL_WARNING}</p>
         <nav aria-label="Landing pages" className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
           {LANDING_PAGES.map((page) => (
             <Link key={page.slug} href={`/${page.slug}`} className="text-muted-foreground underline-offset-4 hover:underline">

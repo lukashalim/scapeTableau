@@ -17,12 +17,18 @@ function useCliTranspiler(): boolean {
   return !process.env.VERCEL;
 }
 
-function runCli(payload: Buffer): Promise<{ code: number; stdout: string; stderr: string }> {
+const DIALECTS = new Set(["ansi", "snowflake", "postgres", "duckdb", "bigquery", "tsql", "dax"]);
+
+function runCli(
+  payload: Buffer,
+  dialect: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   const python = process.env.PYTHON_BIN ?? "python3";
   const cli = path.join(repoRoot(), "cli.py");
+  const args = [cli, "process", "-", "--format", "json", "--dialect", dialect];
 
   return new Promise((resolve, reject) => {
-    const child = spawn(/* turbopackIgnore: true */ python, [cli, "process", "-", "--format", "json"], {
+    const child = spawn(/* turbopackIgnore: true */ python, args, {
       cwd: repoRoot(),
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -72,6 +78,11 @@ export async function POST(request: NextRequest) {
   if (!name.endsWith(".twb") && !name.endsWith(".twbx")) {
     return NextResponse.json({ error: "Only .twb and .twbx workbooks are accepted." }, { status: 400 });
   }
+  const rawDialect = form.get("dialect");
+  const dialect =
+    typeof rawDialect === "string" && DIALECTS.has(rawDialect.toLowerCase())
+      ? rawDialect.toLowerCase()
+      : "ansi";
 
   const payload = Buffer.from(await file.arrayBuffer());
   if (payload.length === 0) {
@@ -81,12 +92,13 @@ export async function POST(request: NextRequest) {
   if (!useCliTranspiler()) {
     const retry = new FormData();
     retry.set("file", new File([payload], file.name, { type: file.type || "application/octet-stream" }));
+    retry.set("dialect", dialect);
     return runPythonEngine(request, retry);
   }
 
   let ran: { code: number; stdout: string; stderr: string };
   try {
-    ran = await runCli(payload);
+    ran = await runCli(payload, dialect);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to start the Python CLI.";
     return NextResponse.json({ error: message }, { status: 500 });

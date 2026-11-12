@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "BIEscape — Tableau to Power BI migration tool";
+export const alt = "BIEscape — open Tableau workbooks in the browser";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -23,10 +23,10 @@ export default function OpenGraphImage() {
           BIESCAPE
         </div>
         <div style={{ marginTop: 24, fontSize: 64, fontWeight: 600, lineHeight: 1.1, maxWidth: 980 }}>
-          Tableau to Power BI migration tool
+          Open Tableau workbooks in the browser
         </div>
         <div style={{ marginTop: 28, fontSize: 28, color: "#cbd5e1", maxWidth: 900 }}>
-          Open a TWBX without Tableau. Convert calculated fields to SQL.
+          SQL, DAX, and a Power BI project for Desktop.
         </div>
       </div>
     ),

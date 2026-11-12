@@ -299,6 +299,7 @@ body {
   padding: 12px 14px;
   font-size: 0.9rem;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .banner.success {

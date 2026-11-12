@@ -10,8 +10,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   runConvert,
+  runPbip,
   runTranspile,
   type ConvertResult,
+  type PbipResult,
   type TranspileResult,
 } from "./convert.js";
 import type { ConvertStatus, SqlDialect } from "./types.js";
@@ -21,6 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 const ALLOWED = new Set([".hyper", ".twbx", ".tdsx", ".twb"]);
 const EXTRACT_ALLOWED = new Set([".hyper", ".twbx", ".tdsx", ".twb"]);
+const PBIP_ALLOWED = new Set([".twb", ".twbx", ".tdsx"]);
 const DIALECTS = new Set(["ansi", "snowflake", "postgres", "duckdb", "tsql"]);
 
 let mainWindow: BrowserWindow | null = null;
@@ -223,6 +226,71 @@ ipcMain.handle(
       sqlScript: result.sql_script,
       workbook: result.workbook,
       skipped: result.skipped,
+    };
+    sendStatus(status);
+    return status;
+  },
+);
+
+ipcMain.handle(
+  "pbip:run",
+  async (_event, sourcePath: string): Promise<ConvertStatus> => {
+    if (!sourcePath || typeof sourcePath !== "string") {
+      const status: ConvertStatus = {
+        phase: "error",
+        error: "No file selected.",
+      };
+      sendStatus(status);
+      return status;
+    }
+
+    const ext = path.extname(sourcePath).toLowerCase();
+    if (!PBIP_ALLOWED.has(ext)) {
+      const status: ConvertStatus = {
+        phase: "error",
+        sourcePath,
+        error: "Power BI projects need a .twb, .twbx, or .tdsx workbook.",
+      };
+      sendStatus(status);
+      return status;
+    }
+
+    if (!mainWindow) {
+      return { phase: "error", error: "Window not ready." };
+    }
+
+    const pick = await dialog.showOpenDialog(mainWindow, {
+      title: "Choose a folder for the Power BI project",
+      buttonLabel: "Save project here",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (pick.canceled || !pick.filePaths[0]) {
+      const status: ConvertStatus = { phase: "selected", sourcePath };
+      sendStatus(status);
+      return status;
+    }
+
+    const destDir = path.join(pick.filePaths[0], path.parse(sourcePath).name);
+    sendStatus({ phase: "converting", sourcePath, outputPath: destDir });
+
+    const result: PbipResult = await runPbip(sourcePath, destDir);
+    if (!result.ok) {
+      const status: ConvertStatus = {
+        phase: "error",
+        sourcePath,
+        error: result.error,
+      };
+      sendStatus(status);
+      return status;
+    }
+
+    const status: ConvertStatus = {
+      phase: "success",
+      sourcePath,
+      outputPath: result.output,
+      sheets: [],
+      notes: result.notes ?? [],
+      format: "pbip",
     };
     sendStatus(status);
     return status;

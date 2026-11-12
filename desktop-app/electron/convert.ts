@@ -122,3 +122,18 @@ export function runTranspile(
     dialect,
   ]) as Promise<TranspileResult>;
 }
+
+export type PbipResult =
+  | {
+      ok: true;
+      output: string;
+      workbook: string | null;
+      field_count: number;
+      format: "pbip";
+      notes?: string[];
+    }
+  | { ok: false; error: string; traceback?: string };
+
+export function runPbip(sourcePath: string, outputDir: string): Promise<PbipResult> {
+  return runSidecar(["pbip", sourcePath, outputDir]) as Promise<PbipResult>;
+}

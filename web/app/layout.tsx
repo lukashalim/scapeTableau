@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 
 import { ThemeProvider } from "@/components/theme-provider";
+import { WorkbookProvider } from "@/components/workbook-session";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Toaster } from "@/components/ui/sonner";
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, SITE_NAME, SITE_URL } from "@/lib/site";
@@ -42,13 +43,13 @@ export const metadata: Metadata = {
         url: "/og.png",
         width: 1200,
         height: 630,
-        alt: "BIEscape — Tableau to Power BI migration tool",
+        alt: "BIEscape — open Tableau workbooks in the browser",
       },
       {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "BIEscape — Tableau to Power BI migration tool",
+        alt: "BIEscape — open Tableau workbooks in the browser",
       },
     ],
   },
@@ -69,14 +70,21 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="flex min-h-full flex-col font-sans">
         <ThemeProvider>
-          <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b bg-background/90 px-4 py-3 backdrop-blur md:px-8">
-            <Link href="/" className="font-medium tracking-tight">
-              {SITE_NAME}
-            </Link>
-            <ThemeToggle />
-          </header>
-          {children}
-          <Toaster />
+          <WorkbookProvider>
+            <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b bg-background/90 px-4 py-3 backdrop-blur md:px-8">
+              <Link href="/" className="font-medium tracking-tight">
+                {SITE_NAME}
+              </Link>
+              <div className="flex items-center gap-4">
+                <Link href="/tableau-to-power-bi" className="text-sm font-medium underline-offset-4 hover:underline">
+                  Tableau to Power BI
+                </Link>
+                <ThemeToggle />
+              </div>
+            </header>
+            {children}
+            <Toaster />
+          </WorkbookProvider>
         </ThemeProvider>
       </body>
     </html>

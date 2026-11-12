@@ -1,8 +1,10 @@
 "use client";
 
+import { strFromU8, unzipSync } from "fflate";
 import dynamic from "next/dynamic";
 import {
   AlertCircle,
+  ChartColumn,
   BookOpen,
   Check,
   Copy,
@@ -16,8 +18,10 @@ import {
   Table2,
   Upload,
 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -29,7 +33,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DESKTOP_RELEASE_URL, DESKTOP_RELEASES_PAGE } from "@/lib/site";
+import { useWorkbookSession, type SqlDialect } from "@/components/workbook-session";
+import { DesktopDownloadLink, DESKTOP_INSTALL_WARNING } from "@/components/desktop-download-link";
+import { DESKTOP_RELEASES_PAGE } from "@/lib/site";
 import type {
   CalculatedField,
   ColumnField,
@@ -48,14 +54,67 @@ const Editor = dynamic(() => import("@monaco-editor/react"), {
   ),
 });
 
-type UiState = "empty" | "loading" | "error" | "success";
 type FieldFilter = "all" | "active" | "hidden";
+
+const SQL_DIALECTS: { value: SqlDialect; label: string }[] = [
+  { value: "ansi", label: "ANSI" },
+  { value: "snowflake", label: "Snowflake" },
+  { value: "bigquery", label: "BigQuery" },
+  { value: "tsql", label: "SQL Server" },
+  { value: "postgres", label: "Postgres" },
+  { value: "duckdb", label: "DuckDB" },
+];
 
 function statusVariant(status: CalculatedField["status"]): "default" | "secondary" | "destructive" | "outline" {
   if (status === "ok") return "default";
   if (status === "unparseable") return "secondary";
   if (status === "error") return "destructive";
   return "outline";
+}
+
+interface ConversionElement {
+  element: string;
+  tableau: string;
+  powerbi: string;
+  status: string;
+  note: string;
+}
+
+interface WorksheetConversion {
+  worksheet: string;
+  page: string;
+  visual_type: string;
+  elements: ConversionElement[];
+}
+
+function conversionBadge(status: string): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "Full") return "default";
+  if (status === "Partial") return "secondary";
+  if (status === "Not converted") return "destructive";
+  return "outline";
+}
+
+function countStatus(elements: ConversionElement[], status: string): number {
+  return elements.filter((element) => element.status === status).length;
+}
+
+function readConversionStatus(bytes: Uint8Array): WorksheetConversion[] {
+  const files = unzipSync(bytes);
+  const entry =
+    files["conversion_status.json"] ??
+    Object.entries(files).find(([name]) => name.endsWith("/conversion_status.json"))?.[1];
+  if (!entry) {
+    throw new Error("This project has no conversion status.");
+  }
+  const parsed: unknown = JSON.parse(strFromU8(entry));
+  if (!Array.isArray(parsed)) {
+    throw new Error("Conversion status was not a list of worksheets.");
+  }
+  return parsed as WorksheetConversion[];
+}
+
+function fileKey(file: File): string {
+  return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
 function printDashboard(dashboard: DashboardInfo) {
@@ -140,16 +199,12 @@ function ExtractPanel({
               Hyper extracts need the Tableau Hyper engine and can&apos;t be converted in the browser.
             </p>
             <p>Download the free Windows installer to turn this into Excel on your computer.</p>
-            <a
-              href={DESKTOP_RELEASE_URL}
-              className={cn(buttonVariants({ variant: "default" }), "inline-flex")}
-            >
+            <DesktopDownloadLink className={cn(buttonVariants({ variant: "default" }), "inline-flex")}>
               <Download data-icon="inline-start" />
               Download Windows installer (.exe)
-            </a>
+            </DesktopDownloadLink>
             <p className="text-xs text-muted-foreground">
-              Direct .exe download (~300MB with hyperd). Unsigned — SmartScreen may warn (More info → Run anyway).
-              Release notes:{" "}
+              Direct .exe download (~300MB with hyperd). {DESKTOP_INSTALL_WARNING} Release notes:{" "}
               <a
                 href={DESKTOP_RELEASES_PAGE}
                 target="_blank"
@@ -363,21 +418,24 @@ function InspectPanel({ result }: { result: TranspileResult }) {
 
 interface WorkbookConverterProps {
   embedded?: boolean;
+  view?: "upload" | "results";
 }
 
-export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) {
+export function WorkbookConverter({ embedded = false, view = "upload" }: WorkbookConverterProps) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-  const fileRef = useRef<File | null>(null);
   const { resolvedTheme } = useTheme();
+  const { state, error, fileName, heldFile, result, dialect, setDialect, fileRef, runFile } = useWorkbookSession();
   const [dragOver, setDragOver] = useState(false);
-  const [state, setState] = useState<UiState>("empty");
-  const [error, setError] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [heldFile, setHeldFile] = useState<File | null>(null);
-  const [result, setResult] = useState<TranspileResult | null>(null);
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedDax, setCopiedDax] = useState(false);
+  const [pbipBlob, setPbipBlob] = useState<Blob | null>(null);
+  const [pbipStatuses, setPbipStatuses] = useState<WorksheetConversion[] | null>(null);
+  const [pbipError, setPbipError] = useState<string | null>(null);
+  const [pbipLoading, setPbipLoading] = useState(false);
+  const [section, setSection] = useState("powerbi");
+  const pbipCacheKey = useRef<string | null>(null);
 
   const filtered = useMemo(() => {
     if (!result) return [];
@@ -391,34 +449,13 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     );
   }, [query, result]);
 
-  const runFile = useCallback(async (file: File) => {
-    setState("loading");
-    setError(null);
-    setFileName(file.name);
-    setResult(null);
-    fileRef.current = file;
-    setHeldFile(file);
-    const body = new FormData();
-    body.append("file", file, file.name);
-    try {
-      const response = await fetch("/api/transpile", { method: "POST", body });
-      const data: unknown = await response.json();
-      if (!response.ok) {
-        const message =
-          data && typeof data === "object" && "error" in data && typeof data.error === "string"
-            ? data.error
-            : "Transpile failed.";
-        setError(message);
-        setState("error");
-        return;
-      }
-      setResult(data as TranspileResult);
-      setState("success");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Network error.");
-      setState("error");
-    }
-  }, []);
+  const openConverted = useCallback(
+    async (file: File) => {
+      const ok = await runFile(file);
+      if (ok) router.push("/convert");
+    },
+    [router, runFile],
+  );
 
   const onFiles = useCallback(
     (files: FileList | null) => {
@@ -426,32 +463,30 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
       if (!file) return;
       const lower = file.name.toLowerCase();
       if (!lower.endsWith(".twb") && !lower.endsWith(".twbx")) {
-        setError("Drop a .twb or .twbx workbook.");
-        setState("error");
+        toast.error("Drop a .twb or .twbx workbook.");
         return;
       }
-      void runFile(file);
+      void openConverted(file);
     },
-    [runFile],
+    [openConverted],
   );
 
   const trySample = useCallback(async () => {
-    setState("loading");
-    setError(null);
-    setFileName("superstore_calcs.twb");
+    // Tableau Desktop 2023.1 workbook, unpacked. The .twbx package stays off the sample button.
     try {
-      const response = await fetch("/samples/superstore_calcs.twb");
+      const response = await fetch("/samples/US_Superstore_10.0.twb");
       if (!response.ok) {
         throw new Error("Sample workbook is missing from the web public folder.");
       }
       const blob = await response.blob();
-      const file = new File([blob], "superstore_calcs.twb", { type: "application/xml" });
-      await runFile(file);
+      const file = new File([blob], "US_Superstore_10.0.twb", {
+        type: "application/octet-stream",
+      });
+      await openConverted(file);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load the sample workbook.");
-      setState("error");
+      toast.error(err instanceof Error ? err.message : "Could not load the sample workbook.");
     }
-  }, [runFile]);
+  }, [openConverted]);
 
   const copySql = useCallback(async () => {
     if (!result?.sql_script) return;
@@ -480,7 +515,86 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
     URL.revokeObjectURL(url);
   }, [result]);
 
+  const convertPbip = useCallback(async () => {
+    const file = fileRef.current;
+    if (!file) {
+      setPbipError("Re-drop the workbook to convert it.");
+      return;
+    }
+    const key = fileKey(file);
+    if (pbipCacheKey.current === key) return;
+    pbipCacheKey.current = key;
+    setPbipLoading(true);
+    setPbipError(null);
+    setPbipStatuses(null);
+    setPbipBlob(null);
+    try {
+      const body = new FormData();
+      body.append("file", file, file.name);
+      const response = await fetch("/api/pbip", { method: "POST", body });
+      if (!response.ok) {
+        const raw = await response.text();
+        let message = `PBIP export failed (HTTP ${response.status})`;
+        try {
+          const data: unknown = JSON.parse(raw);
+          if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+            message = data.error;
+          }
+        } catch {
+          const stripped = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+          if (stripped) message = stripped;
+        }
+        throw new Error(message.slice(0, 280));
+      }
+      const blob = await response.blob();
+      if (blob.size < 4) {
+        throw new Error("PBIP export returned an empty file.");
+      }
+      const statuses = readConversionStatus(new Uint8Array(await blob.arrayBuffer()));
+      if (pbipCacheKey.current !== key) return;
+      setPbipBlob(blob);
+      setPbipStatuses(statuses);
+    } catch (err) {
+      if (pbipCacheKey.current === key) pbipCacheKey.current = null;
+      const message = err instanceof Error ? err.message : "PBIP conversion failed.";
+      console.error("[pbip]", message);
+      setPbipError(message.slice(0, 280));
+    } finally {
+      setPbipLoading(false);
+    }
+  }, []);
+
+  const pbipBase = (fileName || heldFile?.name || "").replace(/\.(twbx?)$/i, "");
+  const pbipLabel = pbipBase ? `${pbipBase}.pbip` : ".pbip";
+
+  const downloadPbip = useCallback(() => {
+    if (!pbipBlob) return;
+    const url = URL.createObjectURL(pbipBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${pbipBase || "escapetableau"}.pbip.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [pbipBlob, pbipBase]);
+
+  const retryPbip = useCallback(() => {
+    pbipCacheKey.current = null;
+    void convertPbip();
+  }, [convertPbip]);
+
+  useEffect(() => {
+    if (state === "success" && section === "powerbi") void convertPbip();
+  }, [state, section, convertPbip]);
+
+  useEffect(() => {
+    if (view === "results" && !heldFile && state !== "loading") router.replace("/");
+  }, [view, heldFile, state, router]);
+
   const okCount = result?.calculated_fields.filter((f) => f.status === "ok").length ?? 0;
+
+  if (view === "results" && !heldFile && state !== "loading") {
+    return null;
+  }
 
   return (
     <div
@@ -489,21 +603,36 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
         embedded ? "pb-10 pt-6 md:pb-16 md:pt-8" : "py-10 md:py-16",
       )}
     >
-      {embedded ? null : (
+      {view === "upload" && !embedded ? (
         <header className="max-w-3xl space-y-2">
           <h2 className="font-heading text-2xl font-semibold tracking-tight">Convert a workbook</h2>
           <p className="text-sm text-muted-foreground">
             Drop a <span className="font-medium text-foreground">.twb</span> or{" "}
-            <span className="font-medium text-foreground">.twbx</span>. One pass transpiles SQL, extracts packaged
-            tables, and inspects schema.
+            <span className="font-medium text-foreground">.twbx</span>. Transpile SQL, convert to Power BI, extract
+            packaged tables, or inspect the schema.
           </p>
         </header>
-      )}
+      ) : null}
 
+      {view === "results" ? (
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-1">
+            <h1 className="font-heading text-2xl font-semibold tracking-tight">{fileName}</h1>
+            <p className="text-sm text-muted-foreground">
+              This workbook stays in memory for this visit. Refreshing the page returns you to the upload.
+            </p>
+          </div>
+          <Link href="/" className={cn(buttonVariants({ variant: "outline" }))}>
+            Another workbook
+          </Link>
+        </div>
+      ) : null}
+
+      {view === "upload" ? (
       <Card className="ring-foreground/15">
         <CardHeader>
           <CardTitle>Workbook</CardTitle>
-          <CardDescription>Accepts Tableau Desktop workbooks. Try the synthetic Superstore sample offline.</CardDescription>
+          <CardDescription>Accepts Tableau Desktop workbooks. The sample is the Tableau Superstore 10.0 .twb.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <label
@@ -554,13 +683,11 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
               <Sparkles data-icon="inline-start" />
               Try with Sample Workbook
             </button>
-            <a
-              href={DESKTOP_RELEASE_URL}
-              className={cn(buttonVariants({ variant: "outline" }), "inline-flex")}
-            >
+            <DesktopDownloadLink className={cn(buttonVariants({ variant: "outline" }), "inline-flex")}>
               <Download data-icon="inline-start" />
               Need Hyper → Excel? Download the Windows desktop app (.exe)
-            </a>
+            </DesktopDownloadLink>
+            <p className="basis-full text-xs text-muted-foreground">{DESKTOP_INSTALL_WARNING}</p>
             {fileName ? (
               <p className="text-sm text-muted-foreground">
                 Last file: <span className="text-foreground">{fileName}</span>
@@ -569,6 +696,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
       {state === "loading" ? (
         <Card className="bg-muted/20">
@@ -587,7 +715,7 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
         </Alert>
       ) : null}
 
-      {state === "success" && result ? (
+      {view === "results" && state === "success" && result ? (
         <div className="space-y-4 rounded-xl bg-muted/15 p-4 ring-1 ring-foreground/10 md:p-5">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Badge>{result.calculated_fields.length} fields</Badge>
@@ -597,12 +725,21 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
               <span className="text-muted-foreground">{result.workbook_name}</span>
             ) : null}
           </div>
-          <Tabs defaultValue="transpile">
+          <Tabs
+            value={section}
+            onValueChange={(value) => {
+              setSection(String(value));
+            }}
+          >
             <div className="rounded-lg border bg-background/80 p-2">
               <TabsList className="h-auto w-full flex-wrap justify-start">
                 <TabsTrigger value="transpile">
                   <FileCode2 data-icon="inline-start" />
-                  Transpile to SQL/dbt
+                  Transpile to SQL
+                </TabsTrigger>
+                <TabsTrigger value="powerbi">
+                  <ChartColumn data-icon="inline-start" />
+                  Convert to Power BI
                 </TabsTrigger>
                 <TabsTrigger value="extract">
                   <FileSpreadsheet data-icon="inline-start" />
@@ -635,10 +772,28 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="sql" className="mt-3 space-y-2">
-                  <div className="flex justify-end">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      Dialect
+                      <select
+                        className="rounded-md border bg-background px-2 py-1 text-foreground"
+                        value={dialect}
+                        onChange={(e) => {
+                          const next = e.target.value as SqlDialect;
+                          setDialect(next);
+                          if (heldFile) void runFile(heldFile, next);
+                        }}
+                      >
+                        {SQL_DIALECTS.map((d) => (
+                          <option key={d.value} value={d.value}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <Button variant="outline" size="sm" onClick={() => void copySql()}>
                       {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                      {copied ? "Copied" : "Copy"}
+                      {copied ? "Copied" : "Copy SQL"}
                     </Button>
                   </div>
                   <div className="overflow-hidden rounded-xl border">
@@ -738,6 +893,111 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
                 </TabsContent>
               </Tabs>
             </TabsContent>
+            <TabsContent value="powerbi" className="mt-3 space-y-4">
+              <div className="flex justify-center">
+                <Button
+                  size="lg"
+                  className="h-11 bg-emerald-600 px-6 text-base text-white hover:bg-emerald-700 dark:bg-yellow-400 dark:text-neutral-950 dark:hover:bg-yellow-300"
+                  onClick={downloadPbip}
+                  disabled={!pbipBlob || pbipLoading}
+                >
+                  {pbipLoading ? (
+                    <Loader2 className="animate-spin" data-icon="inline-start" />
+                  ) : (
+                    <Download data-icon="inline-start" />
+                  )}
+                  {pbipLoading ? `Preparing ${pbipLabel}…` : `Download ${pbipLabel}`}
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Each sheet is scored against the Power BI visual it became.
+              </p>
+              {pbipLoading ? (
+                <div className="flex items-center gap-3 py-10 text-muted-foreground">
+                  <Loader2 className="size-5 animate-spin" />
+                  Converting to a Power BI project…
+                </div>
+              ) : null}
+              {pbipError ? (
+                <Alert variant="destructive">
+                  <AlertCircle />
+                  <AlertTitle>Could not convert this workbook</AlertTitle>
+                  <AlertDescription className="flex flex-col items-start gap-3">
+                    {pbipError}
+                    <Button variant="outline" size="sm" onClick={retryPbip}>
+                      Try again
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {pbipStatuses ? (
+                <div className="space-y-4">
+                  <ScrollArea className="h-[220px] rounded-xl border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Worksheet</TableHead>
+                          <TableHead>Power BI visual</TableHead>
+                          <TableHead className="text-right">Full</TableHead>
+                          <TableHead className="text-right">Partial</TableHead>
+                          <TableHead className="text-right">Not converted</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pbipStatuses.map((sheet) => (
+                          <TableRow key={`${sheet.page}-${sheet.worksheet}`}>
+                            <TableCell className="font-medium">{sheet.worksheet}</TableCell>
+                            <TableCell>{sheet.visual_type}</TableCell>
+                            <TableCell className="text-right">{countStatus(sheet.elements, "Full")}</TableCell>
+                            <TableCell className="text-right">{countStatus(sheet.elements, "Partial")}</TableCell>
+                            <TableCell className="text-right">{countStatus(sheet.elements, "Not converted")}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
+                  {pbipStatuses.map((sheet) => (
+                    <div key={`${sheet.page}-${sheet.worksheet}-detail`} className="space-y-2">
+                      <p className="text-sm font-medium">
+                        {sheet.worksheet}
+                        <span className="ml-2 font-normal text-muted-foreground">
+                          {sheet.visual_type}
+                          {sheet.page ? ` · ${sheet.page}` : ""}
+                        </span>
+                      </p>
+                      <ScrollArea className="h-[280px] rounded-xl border">
+                        <Table className="table-fixed">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-[16%]">Element</TableHead>
+                              <TableHead className="w-[22%]">Tableau</TableHead>
+                              <TableHead className="w-[22%]">Power BI</TableHead>
+                              <TableHead className="w-[12%]">Status</TableHead>
+                              <TableHead className="w-[28%]">Notes</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {sheet.elements.map((element, index) => (
+                              <TableRow key={`${sheet.worksheet}-${element.element}-${index}`}>
+                                <TableCell className="whitespace-normal align-top">{element.element}</TableCell>
+                                <TableCell className="whitespace-normal align-top">{element.tableau}</TableCell>
+                                <TableCell className="whitespace-normal align-top">{element.powerbi}</TableCell>
+                                <TableCell className="align-top">
+                                  <Badge variant={conversionBadge(element.status)}>{element.status}</Badge>
+                                </TableCell>
+                                <TableCell className="whitespace-normal align-top text-muted-foreground">
+                                  {element.note}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </ScrollArea>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </TabsContent>
             <TabsContent value="extract" className="mt-3">
               <ExtractPanel inventory={result.extract_inventory} file={heldFile} />
             </TabsContent>
@@ -748,6 +1008,8 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
         </div>
       ) : null}
 
+      {view === "upload" ? (
+      <>
       <Separator />
       <footer className="space-y-2 pb-8 text-sm text-muted-foreground">
         <p>
@@ -776,6 +1038,8 @@ export function WorkbookConverter({ embedded = false }: WorkbookConverterProps) 
         </p>
         <p>Requires Python 3.11+ and <code className="font-mono text-xs">pip install -r requirements.txt</code>.</p>
       </footer>
+      </>
+      ) : null}
     </div>
   );
 }

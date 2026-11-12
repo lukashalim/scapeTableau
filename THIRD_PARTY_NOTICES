@@ -1,0 +1,51 @@
+# Third-party notices
+
+This file attributes MIT-licensed material adapted into BIEscape.
+
+## cyphou / TableauToPowerBI
+
+- Project: https://github.com/cyphou/TableauToPowerBI
+  (formerly https://github.com/cyphou/Tableau-To-PowerBI)
+- License: MIT
+- Copyright: Copyright (c) Tableau to Power BI Migration Team / cyphou contributors
+
+Portions of BIEscape’s PBIP Desktop-openability path were **adapted** from that
+project (not vendored as a runtime/CLI dependency):
+
+| BIEscape path | Upstream idea |
+| --- | --- |
+| `engine/pbip/desktop_paths.py` | Path-budget planning (`desktop_paths.py`) |
+| `engine/pbip/dax_polish.py` (`heal_double_equals`) | Safe `==` → `=` heal (`dax_healing.py`) |
+| `engine/pbip/validate.py` (TMDL `''` idents, path checks) | Openability / TMDL quoting patterns |
+
+BIEscape does **not** ship or invoke their `migrate.py` CLI, VS Code extension,
+or Fabric deploy stack. We keep our in-memory web/engine architecture.
+
+### MIT License (upstream)
+
+```
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Guust Franssens / tableau-to-powerbi-migration
+
+Sparse templates under `vendor/franssens-tableau-to-powerbi/` — see that
+directory’s `LICENSE` and `NOTICE`.

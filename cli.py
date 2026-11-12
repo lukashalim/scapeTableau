@@ -34,6 +34,7 @@ class OutputFormat(str, Enum):
     all = "all"
     dax = "dax"
     dbt = "dbt"
+    pbip = "pbip"
 
 
 class InspectFormat(str, Enum):
@@ -118,7 +119,8 @@ def process(
     dialect: str = typer.Option(
         "ansi",
         "--dialect",
-        help="ansi | snowflake | postgres | duckdb | tsql | dax",
+        help="ansi | snowflake | postgres | duckdb | bigquery | tsql | dax "
+        "(bigquery uses sqlglot rewrite; snowflake/tsql are engine-native)",
     ),
     target: str = typer.Option(
         "sql",
@@ -192,6 +194,55 @@ def inspect_cmd(
         return
     sys.stdout.write(snapshot.model_dump_json(indent=2))
     sys.stdout.write("\n")
+
+
+@app.command("pbip")
+def pbip_cmd(
+    path: str = typer.Argument(..., metavar="PATH", help="Workbook path, or - for stdin."),
+    output: str = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Write .pbip zip here, or - to stream zip bytes on stdout.",
+    ),
+    dialect: str = typer.Option("ansi", "--dialect", help="SQL dialect retained alongside PBIP."),
+) -> None:
+    """Emit a downloadable Power BI Project (.pbip) zip (default migration artifact)."""
+
+    from engine import transpile
+    from engine.pbip import build_pbip_zip, transpile_to_pbip
+
+    try:
+        if path != "-":
+            zip_bytes, result = transpile_to_pbip(Path(path), dialect=dialect)
+        else:
+            payload = _read_source(path)
+            result = transpile(payload, dialect=dialect)
+            zip_bytes = build_pbip_zip(result, source_stem="workbook", source=payload)
+    except WorkbookParseError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:  # pragma: no cover
+        typer.secho(f"PBIP export failed: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    if output == "-":
+        sys.stdout.buffer.write(zip_bytes)
+        typer.secho(
+            f"Wrote PBIP zip ({len(result.calculated_fields)} fields) → stdout",
+            fg=typer.colors.GREEN,
+            err=True,
+        )
+        return
+
+    out_path = Path(output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(zip_bytes)
+    typer.secho(
+        f"Wrote PBIP zip ({len(result.calculated_fields)} fields) → {out_path}",
+        fg=typer.colors.GREEN,
+        err=True,
+    )
 
 
 @app.command("extract")

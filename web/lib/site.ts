@@ -23,6 +23,41 @@ export interface LandingPage {
 
 export const LANDING_PAGES: LandingPage[] = [
   {
+    slug: "tableau-to-power-bi",
+    title: "Tableau to Power BI | BIEscape",
+    description:
+      "Tableau to Power BI: BIEscape builds a Power BI project (.pbip) from a Tableau workbook. Open it in Power BI Desktop for visuals, a conversion status, and live database connections. It is not a .pbix and not a pixel copy of the dashboard.",
+    h1: "Tableau to Power BI",
+    lede: "Tableau to Power BI starts from the workbook you already have. BIEscape builds a Power BI project (.pbip) you open in Power BI Desktop: visuals, a conversion status for each sheet, and live database connections that stay live. It is not a .pbix, not a pixel copy of the Tableau dashboard, and items that only convert in part stay marked partial.",
+    capabilities: [
+      "A Power BI project (.pbip) with worksheet visuals and a per-sheet conversion status.",
+      "Live Postgres and SQL Server connections stay live; Desktop asks for the password. Extracts and files become CSV.",
+      "Calculated fields transpiled to SQL and DAX in the same pass as the project.",
+    ],
+    limitations: [
+      "The download is a .pbip project, not a .pbix, and not a pixel copy of the Tableau dashboard.",
+      "Partial and unconverted items stay marked in the conversion status.",
+      "Hyper extracts are not converted in the browser. Use the desktop converter for Hyper to Excel.",
+    ],
+    faqs: [
+      {
+        question: "Does BIEscape convert Tableau to Power BI?",
+        answer:
+          "Yes. It builds a Power BI project (.pbip) you open in Power BI Desktop, with visuals and a conversion status. It does not emit a .pbix, and it does not clone the Tableau dashboard pixel for pixel. Partial items stay marked partial.",
+      },
+      {
+        question: "What should I use it for in a PBI migration?",
+        answer:
+          "Drop the workbook on the homepage, open Convert to Power BI, and download the .pbip. Review the status, then finish partial items in Desktop. Live database connections stay live and Desktop prompts for the password.",
+      },
+      {
+        question: "Where do I start?",
+        answer:
+          "Open the converter on the homepage, drop a .twb or .twbx, then choose Convert to Power BI.",
+      },
+    ],
+  },
+  {
     slug: "twbx-viewer",
     title: "Open a TWBX file without Tableau | BIEscape",
     description:
@@ -159,40 +194,6 @@ export const LANDING_PAGES: LandingPage[] = [
     ],
   },
   {
-    slug: "tableau-to-power-bi",
-    title: "Tableau to Power BI migration helper | BIEscape",
-    description:
-      "BIEscape extracts Tableau calculated fields to SQL and DAX, plus packaged tables and schema, so you can migrate toward Power BI. It does not emit PBIX.",
-    h1: "Tableau to Power BI: extract the logic first",
-    lede: "A Power BI migration still needs a PBIX and Power Query. BIEscape gives you the Tableau side of that work: SQL and DAX from calculated fields, Excel from packaged CSV/XLSX, and a schema inspect. It does not generate a Power BI file.",
-    capabilities: [
-      "SQL and DAX transpile of Tableau calculated fields for warehouse views or Power BI measures.",
-      "Excel extract of CSV/XLSX packaged in the twbx; Hyper via the free desktop converter.",
-      "Schema inspect: columns, hidden fields, parameters, dashboard wireframes.",
-    ],
-    limitations: [
-      "BIEscape does not emit PBIX, PBIT, or Power Query M. LOD expressions stay as DAX TODO comments.",
-      "Browser extract does not convert .hyper — download BIEscape Converter from GitHub Releases.",
-    ],
-    faqs: [
-      {
-        question: "Does BIEscape convert Tableau to Power BI?",
-        answer:
-          "It transpiles calculated fields to DAX expressions and SQL, and extracts packaged tables. It does not write a PBIX.",
-      },
-      {
-        question: "What should I use it for in a PBI migration?",
-        answer:
-          "Inventory fields, copy transpiled DAX or SQL as a starting point for measures, and export packaged CSV/XLSX when Hyper is not involved.",
-      },
-      {
-        question: "Where do I start?",
-        answer:
-          "Open the converter on the homepage, drop a .twb or .twbx, then review Transpile, Extract Data, and Inspect Schema.",
-      },
-    ],
-  },
-  {
     slug: "tableau-to-looker",
     title: "Tableau to Looker migration helper | BIEscape",
     description:
@@ -264,23 +265,23 @@ export const LANDING_PAGES: LandingPage[] = [
     slug: "tableau-to-dax",
     title: "Convert Tableau calculated fields to DAX | BIEscape",
     description:
-      "Transpile Tableau calculated fields (IIF, ZN, IFNULL, CONTAINS, IF/THEN) into DAX expressions for Power BI measures. LOD expressions stay as TODO comments. No PBIX export.",
+      "Transpile Tableau calculated fields (IIF, ZN, IFNULL, CONTAINS, IF/THEN) into DAX. Copy the measures from Transpile, or download the Power BI project (.pbip) from Convert to Power BI.",
     h1: "Convert Tableau calculations to DAX",
-    lede: "BIEscape maps Tableau calculated-field formulas to DAX in the same parse as SQL. Use the Transpile workspace DAX view to copy measures. It does not emit a PBIX or load Hyper extracts.",
+    lede: "BIEscape maps Tableau calculated-field formulas to DAX in the same parse as SQL. Copy measures from the Transpile DAX tab, or download the .pbip project and open it in Power BI Desktop. Hyper extracts use the desktop converter.",
     capabilities: [
       "IIF → IF, ZN → IF(ISBLANK(), 0, x), IFNULL → IF(ISBLANK()), CONTAINS → CONTAINSSTRING.",
       "IF / THEN / ELSEIF as nested IF; field names stay [Field Name].",
       "Same upload fills SQL and DAX so you can compare warehouse views with Power BI measures.",
     ],
     limitations: [
-      "FIXED / INCLUDE / EXCLUDE LOD expressions are DAX TODO comments, not CALCULATE/ALLEXCEPT rewrites.",
-      "No PBIX, PBIT, or Power Query M export. Use the desktop converter for Hyper → Excel.",
+      "FIXED LOD maps to CALCULATE + ALLEXCEPT / ALL; INCLUDE/EXCLUDE need worksheet grain; nested LOD is skipped.",
+      "The Power BI download is a .pbip project you open in Desktop, not a .pbix or .pbit. Hyper extracts use the desktop converter.",
     ],
     faqs: [
       {
         question: "Does BIEscape convert Tableau to DAX?",
         answer:
-          "Yes for calculated-field expressions (IIF, ZN, IFNULL, CONTAINS, IF/THEN, aggregations). It does not build a Power BI data model file.",
+          "Yes for calculated-field expressions (IIF, ZN, IFNULL, CONTAINS, IF/THEN, aggregations). Convert to Power BI also downloads a .pbip project with those measures in the model.",
       },
       {
         question: "Are LOD calculations converted to DAX?",
@@ -302,8 +303,18 @@ export function getLandingPage(slug: string): LandingPage | undefined {
   return LANDING_PAGES.find((page) => page.slug === slug);
 }
 
-export const DEFAULT_TITLE =
-  "Tableau to Power BI migration tool — open TWBX without Tableau, convert to SQL | BIEscape";
+export function relatedLandings(slug: string): { href: string; label: string }[] {
+  if (slug === "tableau-to-power-bi") {
+    return [
+      { href: "/tableau-to-dax", label: "Convert Tableau calculations to DAX" },
+      { href: "/tableau-to-sql", label: "Convert a Tableau workbook to SQL" },
+      { href: "/twbx-to-excel", label: "TWBX to Excel" },
+    ];
+  }
+  return [{ href: "/tableau-to-power-bi", label: "Tableau to Power BI" }];
+}
+
+export const DEFAULT_TITLE = "Open Tableau workbooks in the browser | BIEscape";
 
 export const DEFAULT_DESCRIPTION =
-  "BIEscape is a Tableau to Power BI migration helper: open a TWBX without Tableau, convert Tableau calculated fields to SQL, extract packaged Excel/CSV, and inspect schema. Hyper → Excel uses the free desktop converter. Not a PBIX, LookML, or QuickSight exporter.";
+  "BIEscape opens a Tableau .twb or .twbx in the browser: calculated fields to SQL and DAX, packaged Excel and CSV, schema inspect, and a Power BI project (.pbip) for Desktop. Hyper extracts use the free desktop converter.";

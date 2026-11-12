@@ -1,3 +1,4 @@
+import { type ReactNode } from "react";
 import { FileSpreadsheet, Search, ShieldCheck, Terminal } from "lucide-react";
 import Link from "next/link";
 
@@ -9,7 +10,7 @@ import { GITHUB_URL } from "@/lib/site";
 
 interface FeatureRow {
   feature: string;
-  ships: string;
+  ships: ReactNode;
 }
 
 const FEATURES: FeatureRow[] = [
@@ -21,7 +22,7 @@ const FEATURES: FeatureRow[] = [
   {
     feature: "Formula transpilation",
     ships:
-      "IIF / ZN / IFNULL / CONTAINS / STARTSWITH (plus IF/CASE, LEN, TRIM, UPPER/LOWER, ABS, ROUND) become CASE / COALESCE / LIKE and ANSI SQL. LOD FIXED / INCLUDE / EXCLUDE stay isolated as -- TODO: Review LOD logic comments — they are not rewritten as SQL.",
+      "IIF / ZN / IFNULL / CONTAINS / STARTSWITH (plus IF/CASE, LEN, TRIM, UPPER/LOWER, ABS, ROUND) become CASE / COALESCE / LIKE and ANSI SQL. FIXED, INCLUDE, and EXCLUDE LOD expressions become window functions or grain subqueries.",
   },
   {
     feature: "dbt-ready SQL views",
@@ -37,6 +38,19 @@ const FEATURES: FeatureRow[] = [
     feature: "Inspect Schema",
     ships:
       "Datasources, all columns (including hidden), parameters, redacted connections, and printable dashboard wireframes.",
+  },
+  {
+    feature: "Power BI project",
+    ships: (
+      <>
+        Convert to Power BI downloads a .pbip you open in Desktop, with visuals, a conversion status, and live database
+        connections that stay live.{" "}
+        <Link href="/tableau-to-power-bi" className="underline underline-offset-4">
+          Tableau to Power BI
+        </Link>
+        .
+      </>
+    ),
   },
   {
     feature: "Air-gapped local run",
@@ -60,29 +74,32 @@ const ARCHITECTURE = `                       [ .twb / .twbx bytes ]
                                  ▼
           ┌──────────────────────┼──────────────────────┐
           ▼                      ▼                      ▼
- engine/transpiler.py     engine/extract.py      engine/inspect.py
+ engine/transpiler.py     engine/extract.py      engine/pbip/
           │                      │                      │
           └──────────┬───────────┴──────────┬───────────┘
                      ▼                      ▼
-              TranspileResult         xlsx bytes
+              TranspileResult         xlsx or .pbip.zip
           (calculated_fields, sql_script,
            inspect, extract_inventory, dashboards)
                      │
             ┌────────┼────────┐
             ▼        ▼        ▼
-       [ cli.py ] [ app_local.py ] [ /api/transpile + /api/extract ]`;
+       [ cli.py ] [ app_local.py ] [ /api/transpile + /api/extract + /api/pbip ]`;
 
 export function MarketingHero() {
   return (
     <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 pt-12 md:pt-20">
       <div className="max-w-3xl space-y-5">
         <h1 className="font-heading text-4xl font-semibold tracking-tight text-balance md:text-5xl">
-          Tableau to Power BI migration tool. Open a TWBX without Tableau. Convert Tableau workbooks to SQL.
+          Open Tableau workbooks in the browser.
         </h1>
         <p className="text-lg text-muted-foreground md:text-xl">
-          BIEscape extracts Tableau calculated fields, packaged CSV/XLSX, and schema so you can migrate toward Power BI,
-          warehouses, or dbt. It does not emit PBIX, LookML, or QuickSight assets. Hyper → Excel uses the free desktop
-          converter.
+          BIEscape reads a .twb or .twbx and builds a{" "}
+          <Link href="/tableau-to-power-bi" className="text-foreground underline underline-offset-4">
+            Tableau to Power BI
+          </Link>{" "}
+          project (.pbip) you open in Desktop, plus SQL and DAX from calculated fields. It is not a .pbix and not a
+          pixel copy of the dashboard. Hyper extracts use the free desktop converter.
         </p>
       </div>
     </section>
@@ -223,8 +240,7 @@ python cli.py process sales_report.twbx --output-dir ./models`}
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-12 md:py-16">
         <h2 className="font-heading text-2xl font-semibold tracking-tight md:text-3xl">Architecture &amp; Security</h2>
         <p className="max-w-3xl text-muted-foreground">
-          Python is the source of truth. The Next.js routes stream the upload to the engine and return JSON or xlsx.
-          Nothing is stored after the response.
+          Python is the source of truth. The Next.js routes stream the upload to the engine and return JSON, an Excel file, or a Power BI project zip. Nothing is stored after the response.
         </p>
         <pre className="overflow-x-auto rounded-xl border bg-muted/40 p-4 font-mono text-[11px] leading-snug md:text-xs">
           {ARCHITECTURE}

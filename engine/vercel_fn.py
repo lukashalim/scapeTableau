@@ -6,12 +6,15 @@ import json
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import unquote
 
 from engine import extract_to_xlsx, transpile
+from engine.pbip import build_pbip_zip
 from engine.schema import WorkbookParseError
 
 XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PBIP_TYPE = "application/zip"
 
 
 def _json_bytes(payload: dict, status: int) -> tuple[int, bytes]:
@@ -19,29 +22,41 @@ def _json_bytes(payload: dict, status: int) -> tuple[int, bytes]:
     return status, body
 
 
-def extract_upload(content_type: str, body: bytes) -> tuple[str, bytes] | None:
+_DIALECTS = frozenset({"ansi", "snowflake", "postgres", "duckdb", "bigquery", "tsql", "dax"})
+
+
+def extract_upload(content_type: str, body: bytes) -> tuple[str, bytes, str] | None:
+    """Return (filename, payload, dialect)."""
+
     header = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
     message = BytesParser(policy=policy.default).parsebytes(header + body)
     if not message.is_multipart():
         return None
+    filename: str | None = None
+    payload = b""
+    dialect = "ansi"
     for part in message.iter_parts():
         disposition = part.get("Content-Disposition", "")
-        if "name=\"file\"" not in disposition and "name=file" not in disposition:
-            continue
-        filename = part.get_filename() or "workbook.twb"
-        payload = part.get_payload(decode=True) or b""
-        return unquote(filename), payload
-    return None
+        if "name=\"file\"" in disposition or "name=file" in disposition:
+            filename = part.get_filename() or "workbook.twb"
+            payload = part.get_payload(decode=True) or b""
+        if "name=\"dialect\"" in disposition or "name=dialect" in disposition:
+            raw = (part.get_payload(decode=True) or b"").decode("utf-8", errors="replace").strip().lower()
+            if raw in _DIALECTS:
+                dialect = raw
+    if filename is None:
+        return None
+    return unquote(filename), payload, dialect
 
 
-def transpile_payload(filename: str, payload: bytes) -> tuple[int, bytes]:
+def transpile_payload(filename: str, payload: bytes, dialect: str = "ansi") -> tuple[int, bytes]:
     name = filename.lower()
     if not name.endswith(".twb") and not name.endswith(".twbx"):
         return _json_bytes({"error": "Only .twb and .twbx workbooks are accepted."}, 400)
     if not payload:
         return _json_bytes({"error": "File is empty."}, 400)
     try:
-        result = transpile(payload)
+        result = transpile(payload, dialect=dialect or "ansi")
     except WorkbookParseError as exc:
         return _json_bytes({"error": exc.message}, 400)
     except Exception as exc:  # noqa: BLE001 — surface unexpected parse failures to the client
@@ -49,7 +64,7 @@ def transpile_payload(filename: str, payload: bytes) -> tuple[int, bytes]:
     return 200, result.model_dump_json().encode("utf-8")
 
 
-def extract_payload(filename: str, payload: bytes) -> tuple[int, bytes, str]:
+def extract_payload(filename: str, payload: bytes, _dialect: str = "ansi") -> tuple[int, bytes, str]:
     name = filename.lower()
     if not name.endswith(".twb") and not name.endswith(".twbx"):
         status, body = _json_bytes({"error": "Only .twb and .twbx workbooks are accepted."}, 400)
@@ -68,6 +83,29 @@ def extract_payload(filename: str, payload: bytes) -> tuple[int, bytes, str]:
     return 200, xlsx, XLSX_TYPE
 
 
+def pbip_payload(filename: str, payload: bytes, dialect: str = "ansi") -> tuple[int, bytes, str]:
+    name = filename.lower()
+    if not name.endswith(".twb") and not name.endswith(".twbx"):
+        status, body = _json_bytes({"error": "Only .twb and .twbx workbooks are accepted."}, 400)
+        return status, body, "application/json; charset=utf-8"
+    if not payload:
+        status, body = _json_bytes({"error": "File is empty."}, 400)
+        return status, body, "application/json; charset=utf-8"
+    try:
+        result = transpile(payload, dialect=dialect or "ansi")
+        stem = Path(filename).stem if filename else None
+        zip_bytes = build_pbip_zip(result, source_stem=stem, source=payload)
+    except WorkbookParseError as exc:
+        status, body = _json_bytes({"error": exc.message}, 400)
+        return status, body, "application/json; charset=utf-8"
+    except Exception as exc:  # noqa: BLE001 — surface real exception to client + logs
+        detail = f"{type(exc).__name__}: {exc}"
+        print(f"[pbip_payload] {filename}: {detail}", flush=True)
+        status, body = _json_bytes({"error": detail[:400]}, 500)
+        return status, body, "application/json; charset=utf-8"
+    return 200, zip_bytes, PBIP_TYPE
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 — Vercel Python entrypoint
         length = int(self.headers.get("Content-Length") or 0)
@@ -80,6 +118,8 @@ class handler(BaseHTTPRequestHandler):
             ctype = "application/json; charset=utf-8"
         elif path.rstrip("/").endswith("/extract"):
             status, payload, ctype = extract_payload(*upload)
+        elif path.rstrip("/").endswith("/pbip"):
+            status, payload, ctype = pbip_payload(*upload)
         else:
             status, payload = transpile_payload(*upload)
             ctype = "application/json; charset=utf-8"
@@ -88,6 +128,8 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         if ctype == XLSX_TYPE:
             self.send_header("Content-Disposition", 'attachment; filename="scapetableau-extract.xlsx"')
+        elif ctype == PBIP_TYPE:
+            self.send_header("Content-Disposition", 'attachment; filename="escapetableau.pbip.zip"')
         self.end_headers()
         self.wfile.write(payload)
 

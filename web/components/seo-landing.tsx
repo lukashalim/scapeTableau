@@ -1,11 +1,12 @@
 import Link from "next/link";
 
+import { DesktopDownloadLink } from "@/components/desktop-download-link";
 import { FaqJsonLd } from "@/components/faq-json-ld";
 import { SiteFooter } from "@/components/site-footer";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { LandingPage } from "@/lib/site";
-import { DESKTOP_RELEASE_URL, GITHUB_URL } from "@/lib/site";
+import { GITHUB_URL, relatedLandings, SITE_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 interface SeoLandingProps {
@@ -13,11 +14,29 @@ interface SeoLandingProps {
 }
 
 export function SeoLanding({ page }: SeoLandingProps) {
+  const crumbs = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Home", item: SITE_URL },
+      { "@type": "ListItem", position: 2, name: page.h1, item: `${SITE_URL}/${page.slug}` },
+    ],
+  };
+  const related = relatedLandings(page.slug);
+
   return (
     <div className="flex flex-col">
       <FaqJsonLd faqs={page.faqs} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(crumbs) }} />
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-12 md:py-16">
         <div className="max-w-3xl space-y-5">
+          <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
+            <Link href="/" className="underline-offset-4 hover:underline">
+              Home
+            </Link>
+            <span aria-hidden="true"> / </span>
+            <span className="text-foreground">{page.h1}</span>
+          </nav>
           <h1 className="font-heading text-4xl font-semibold tracking-tight text-balance md:text-5xl">{page.h1}</h1>
           <p className="text-lg text-muted-foreground md:text-xl">{page.lede}</p>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
@@ -25,14 +44,9 @@ export function SeoLanding({ page }: SeoLandingProps) {
               Open the converter
             </Link>
             {page.slug === "twbx-to-excel" ? (
-              <a
-                href={DESKTOP_RELEASE_URL}
-                target="_blank"
-                rel="noreferrer"
-                className={cn(buttonVariants({ size: "lg" }))}
-              >
+              <DesktopDownloadLink newTab className={cn(buttonVariants({ size: "lg" }))}>
                 Download Windows installer (.exe)
-              </a>
+              </DesktopDownloadLink>
             ) : null}
             <a
               href={GITHUB_URL}
@@ -81,31 +95,28 @@ export function SeoLanding({ page }: SeoLandingProps) {
             ))}
           </dl>
         </div>
+        <nav aria-label="Related pages" className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+          {related.map((item) => (
+            <Link key={item.href} href={item.href} className="underline underline-offset-4">
+              {item.label}
+            </Link>
+          ))}
+        </nav>
         <p className="max-w-3xl text-sm text-muted-foreground">
           {page.slug === "twbx-to-excel" ? (
             <>
               For Hyper extracts, download{" "}
-              <a
-                href={DESKTOP_RELEASE_URL}
-                className="underline underline-offset-4"
-                target="_blank"
-                rel="noreferrer"
-              >
+              <DesktopDownloadLink className="underline underline-offset-4">
                 BIEscape Converter
-              </a>{" "}
+              </DesktopDownloadLink>{" "}
               (unsigned Windows installer). Browser conversion stays CSV/XLSX-only.
             </>
           ) : (
             <>
               Hyper → Excel uses the{" "}
-              <a
-                href={DESKTOP_RELEASE_URL}
-                className="underline underline-offset-4"
-                target="_blank"
-                rel="noreferrer"
-              >
+              <DesktopDownloadLink className="underline underline-offset-4">
                 desktop converter
-              </a>
+              </DesktopDownloadLink>
               . Clone the repo at{" "}
               <a href={GITHUB_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
                 {GITHUB_URL}

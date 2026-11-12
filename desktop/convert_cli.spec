@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 block_cipher = None
 
@@ -12,13 +12,15 @@ binaries = []
 hiddenimports = [
     "tableauhyperapi",
     "openpyxl",
+    "xlrd",
     "engine",
     "engine.extract",
     "engine.hyper",
     "engine.parser",
     "engine.schema",
+    "engine.sqlglot_util",
 ]
-
+hiddenimports += collect_submodules("engine.pbip")
 try:
     tmp_ret = collect_all("tableauhyperapi")
     datas += tmp_ret[0]

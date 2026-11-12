@@ -18,10 +18,12 @@ from engine.schema import (
     DatasourceInfo,
     ExtractInventory,
     InspectSnapshot,
+    JoinInfo,
     MeasureNamesUsage,
     ParameterInfo,
     ParseStatus,
     TranspileResult,
+    WorksheetInfo,
 )
 
 _CONSTANT_CASE_RE = re.compile(
@@ -69,6 +71,32 @@ def _datasource_view_name(ds: DatasourceInfo, *, used: set[str] | None = None) -
         used.add(name)
         return name
     return fallback
+
+
+def pbi_table_name(ds: DatasourceInfo) -> str:
+    """Power BI table name, also used in DAX ``'Table'[Column]`` references.
+
+    Prefer the Tableau caption, then a human datasource name. A Hyper filename
+    is only the fallback when those are missing or are internal ids
+    (``federated.*``, ``Extract``), so the model table and the DAX agree.
+    """
+
+    def usable(value: str | None) -> str | None:
+        text = (value or "").strip()
+        if not text:
+            return None
+        low = text.lower()
+        if low.startswith(("dataengine.", "federated.", "sqlproxy.")) or low == "extract":
+            return None
+        return text
+
+    for candidate in (usable(ds.caption), usable(ds.name)):
+        if candidate:
+            return candidate
+    stem = _hyper_file_stem(ds)
+    if stem and stem.lower() != "extract":
+        return stem
+    return "Orders"
 
 
 def _hyper_file_stem(ds: DatasourceInfo) -> str | None:
@@ -354,11 +382,13 @@ def build_sql_script(
 
 
 def _dax_table_name(fields: list[CalculatedField]) -> str:
-    ident = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[")
+    quoted = re.compile(r"'((?:[^']|'')+)'\[")
+    bare = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\[")
     for field in fields:
-        match = ident.search(field.dax or "")
+        dax = field.dax or ""
+        match = quoted.search(dax) or bare.search(dax)
         if match:
-            return match.group(1)
+            return match.group(1).replace("''", "'")
     return "Orders"
 
 
@@ -401,6 +431,8 @@ def build_dax_script(
         lines.append("")
 
     def _emit_section(title: str, group: list[CalculatedField], *, kind: str) -> None:
+        from engine.transpiler import dax_column_ref
+
         lines.append("")
         lines.append(f"// {title}")
         if not group:
@@ -414,7 +446,7 @@ def build_dax_script(
             if kind == "measure":
                 assign = f"[{name}] := {body}"
             else:
-                assign = f"{table}[{name}] = {body}"
+                assign = f"{dax_column_ref(table, name)} = {body}"
             for dax_line in assign.splitlines() or [assign]:
                 lines.append(dax_line)
             lines.append("")
@@ -502,20 +534,34 @@ def assemble_result(
     parameters: list[ParameterInfo] | None = None,
     measure_names: list[MeasureNamesUsage] | None = None,
     workbook_fields: list[ColumnField] | None = None,
+    joins: list[JoinInfo] | None = None,
+    worksheets: list[WorksheetInfo] | None = None,
 ) -> TranspileResult:
     usages = list(measure_names or [])
+    emit_dialect = dialect
+    # BigQuery has minimal native emitters — generate DuckDB SQL then sqlglot→bigquery.
+    if (dialect or "").lower() == "bigquery":
+        emit_dialect = "duckdb"
+    sql_script = build_sql_script(
+        fields,
+        datasources,
+        workbook_name=workbook_name,
+        dialect=emit_dialect,
+        script_style=script_style,
+        parameters=parameters,
+        measure_names=usages,
+    )
+    if (dialect or "").lower() == "bigquery":
+        try:
+            from engine.sqlglot_util import apply_sqlglot_dialect
+
+            sql_script = apply_sqlglot_dialect(sql_script, "bigquery")
+        except Exception:
+            pass
     return TranspileResult(
         calculated_fields=fields,
         datasources=datasources,
-        sql_script=build_sql_script(
-            fields,
-            datasources,
-            workbook_name=workbook_name,
-            dialect=dialect,
-            script_style=script_style,
-            parameters=parameters,
-            measure_names=usages,
-        ),
+        sql_script=sql_script,
         markdown_audit=build_markdown_audit(
             fields, datasources, measure_names=usages
         ),
@@ -534,4 +580,6 @@ def assemble_result(
         target=target,
         measure_names=usages,
         conversion_summary=build_conversion_summary(usages),
+        joins=list(joins or []),
+        worksheets=list(worksheets or []),
     )

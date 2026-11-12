@@ -23,7 +23,7 @@ def test_fixed_partition_window() -> None:
     dax, dax_st, dax_err = transpile_formula("{FIXED [Customer Name]: SUM([Sales])}", target="dax")
     assert dax_st == ParseStatus.ok, dax_err
     assert dax == (
-        "CALCULATE(SUM(Orders[Sales]), ALLEXCEPT(Orders, Orders[Customer Name]))"
+        "CALCULATE(SUM('Orders'[Sales]), ALLEXCEPT('Orders', 'Orders'[Customer Name]))"
     )
 
 
@@ -33,7 +33,7 @@ def test_fixed_none_table_scoped_over_and_all() -> None:
     assert sql == 'SUM("Sales") OVER ()'
     dax, dax_st, dax_err = transpile_formula("{SUM([Sales])}", target="dax")
     assert dax_st == ParseStatus.ok, dax_err
-    assert dax == "CALCULATE(SUM(Orders[Sales]), ALL(Orders))"
+    assert dax == "CALCULATE(SUM('Orders'[Sales]), ALL('Orders'))"
     assert "REMOVEFILTERS" not in dax
 
 
@@ -49,7 +49,7 @@ def test_fixed_countd_subquery() -> None:
     )
     assert dax_st == ParseStatus.ok, dax_err
     assert dax == (
-        "CALCULATE(DISTINCTCOUNT(Orders[Customer]), ALLEXCEPT(Orders, Orders[Region]))"
+        "CALCULATE(DISTINCTCOUNT('Orders'[Customer]), ALLEXCEPT('Orders', 'Orders'[Region]))"
     )
 
 
@@ -62,8 +62,8 @@ def test_ratio_with_fixed_window() -> None:
     )
     assert dax_st == ParseStatus.ok, dax_err
     assert dax == (
-        "DIVIDE(Orders[Sales], CALCULATE(SUM(Orders[Sales]), "
-        "ALLEXCEPT(Orders, Orders[Customer])))"
+        "DIVIDE('Orders'[Sales], CALCULATE(SUM('Orders'[Sales]), "
+        "ALLEXCEPT('Orders', 'Orders'[Customer])))"
     )
 
 
@@ -79,7 +79,7 @@ def test_avg_fixed_uncorrelated_group_by() -> None:
         "AVG({FIXED [Customer]: SUM([Sales])})", target="dax"
     )
     assert dax_st == ParseStatus.ok, dax_err
-    assert dax == "AVERAGEX(VALUES(Orders[Customer]), CALCULATE(SUM(Orders[Sales])))"
+    assert dax == "AVERAGEX(VALUES('Orders'[Customer]), CALCULATE(SUM('Orders'[Sales])))"
     assert "ALLEXCEPT" not in dax
 
 

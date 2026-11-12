@@ -486,9 +486,11 @@ def _build_visual_json(
         col, fn = next(iter(agg_columns.items()))
         query_state = {"Values": {"projections": [_aggregated_projection(entity, col, fn)]}}
     elif visual_type in {"filledMap", "map", "shapeMap"}:
-        # Location = Category. Filled and shape maps colour by the measure (Y).
-        # A symbol map uses that measure as the bubble size.
-        value_role = "Size" if visual_type == "map" else "Y"
+        # Location = Category. A filled map colours by Y. A shape map's colour
+        # saturation well is Gradient; a measure left in Y is not part of the
+        # visual's query, and a fill rule that references it fails to load.
+        # A symbol map uses the measure as the bubble size.
+        value_role = {"map": "Size", "shapeMap": "Gradient"}.get(visual_type, "Y")
         value_projs = [_projection(entity, m, measure=True) for m in measures[:1]]
         if not value_projs:
             value_projs = [
@@ -923,18 +925,30 @@ def _luminance(color: str) -> float:
 
 
 def _apply_map_gradient(objects: dict, body: dict) -> None:
-    """Tableau's map blue-green: pale yellow for low counts, teal for high."""
+    """Tableau's map blue-green: pale yellow for low counts, teal for high.
 
-    projections = ((body.get("query") or {}).get("queryState") or {}).get("Y", {}).get("projections") or []
+    The selector ties the fill to the Gradient projection. A fill rule whose
+    measure is not one of that visual's projections is rejected with
+    AggregateSelectNotInProjectionReferencedIndices.
+    """
+
+    projections = (
+        ((body.get("query") or {}).get("queryState") or {}).get("Gradient", {}).get("projections") or []
+    )
     if not projections or not projections[0].get("field"):
         return
+    target = projections[0]
     objects["dataPoint"] = [
         {
             "properties": {
                 "fill": {
-                    "solid": {"color": {"expr": _gradient(projections[0]["field"], "#2E9B96", low="#F4F6C8")}}
+                    "solid": {"color": {"expr": _gradient(target["field"], "#2E9B96", low="#F4F6C8")}}
                 }
-            }
+            },
+            "selector": {
+                "data": [{"dataViewWildcard": {"matchingOption": 1}}],
+                "metadata": target["queryRef"],
+            },
         }
     ]
 
@@ -1053,7 +1067,9 @@ def _apply_formatting(
             objects["categoryAxis"] = [{"properties": {"showAxisTitle": _lit("false")}}]
             applied.append("field labels off")
         if ws.hide_value_axis:
-            objects["valueAxis"] = [{"properties": {"show": _lit("false")}}]
+            objects["valueAxis"] = [
+                {"properties": {"show": _lit("false"), "showAxisTitle": _lit("false")}}
+            ]
             applied.append("value axis off")
         if not ws.mark_color:
             objects.setdefault("dataPoint", [{"properties": {"fill": _solid("#4E79A7")}}])

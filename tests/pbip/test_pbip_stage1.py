@@ -565,8 +565,9 @@ def test_custom_sql_object_count_becomes_filled_map_and_bars(tmp_path: Path) -> 
     filled = next(v for v in visuals if v["visual"]["visualType"] == "shapeMap")
     loc = filled["visual"]["query"]["queryState"]["Category"]["projections"][0]
     assert loc["field"]["Column"]["Property"] == "State"
-    color = filled["visual"]["query"]["queryState"]["Y"]["projections"][0]
+    color = filled["visual"]["query"]["queryState"]["Gradient"]["projections"][0]
     assert color["field"]["Measure"]["Property"] == "Count of Custom SQL Query"
+    assert "Y" not in filled["visual"]["query"]["queryState"]
     bars = next(v for v in visuals if v["visual"]["visualType"] == "clusteredBarChart")
     bar_cat = bars["visual"]["query"]["queryState"]["Category"]["projections"][0]
     assert bar_cat["field"]["Column"]["Property"] == "industry"

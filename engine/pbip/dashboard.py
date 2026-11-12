@@ -231,6 +231,11 @@ def build_dashboard_page(
                 continue
             if outcomes is not None:
                 outcomes.append(outcome)
+            if zone.show_title is False:
+                # Tableau hid this sheet's title on the dashboard. Power BI otherwise
+                # invents one ("State", "Count of … by industry").
+                containers = visual["visual"].setdefault("visualContainerObjects", {})
+                containers["title"] = [{"properties": {"show": _lit("false")}}]
             emit(visual)
             sheet_visuals[ws.name] = visual["name"]
             rows.append(

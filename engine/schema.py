@@ -99,6 +99,8 @@ class DashboardZone(BaseModel):
     font_name: str | None = None
     # zone-style background-color, e.g. "#34657f"
     fill: str | None = None
+    # Dashboard ``show-title``. False hides the Power BI visual title.
+    show_title: bool | None = None
     children: list[DashboardZone] = Field(default_factory=list)
 
 

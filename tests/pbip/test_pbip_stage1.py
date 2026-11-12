@@ -479,8 +479,8 @@ def test_custom_sql_object_count_becomes_filled_map_and_bars(tmp_path: Path) -> 
         <zone h='8000' w='98000' x='1000' y='1000' type-v2='text'>
           <formatted-text><run fontsize='16'>Businesses Without Websites</run></formatted-text>
         </zone>
-        <zone h='60000' w='98000' x='1000' y='10000' name='Sheet 1'/>
-        <zone h='25000' w='98000' x='1000' y='72000' name='Sheet 2'/>
+        <zone h='60000' w='98000' x='1000' y='10000' name='Sheet 1' show-title='false'/>
+        <zone h='25000' w='98000' x='1000' y='72000' name='Sheet 2' show-title='false'/>
       </zone>
     </zones>
   </dashboard>
@@ -578,6 +578,9 @@ def test_custom_sql_object_count_becomes_filled_map_and_bars(tmp_path: Path) -> 
     bar_cat = bars["visual"]["query"]["queryState"]["Category"]["projections"][0]
     assert bar_cat["field"]["Column"]["Property"] == "industry"
     assert bars["visual"]["query"]["sortDefinition"]["sort"][0]["direction"] == "Descending"
+    for placed in (filled, bars):
+        title = placed["visual"]["visualContainerObjects"]["title"][0]["properties"]["show"]
+        assert title["expr"]["Literal"]["Value"] == "false"
     assert "labels" in bars["visual"]["objects"]
     assert any(p.get("displayName") == "Dashboard 1" for p in page_blobs)
     assert len(pages["pageOrder"]) == 1

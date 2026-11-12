@@ -255,6 +255,11 @@ def _parse_zone(el: ET.Element) -> DashboardZone:
         font_size=first.get("fontsize") if first is not None else None,
         font_name=first.get("fontname") if first is not None else None,
         fill=fill,
+        show_title=(
+            None
+            if el.get("show-title") is None
+            else el.get("show-title", "").lower() not in {"false", "0", "no"}
+        ),
         children=children,
     )
 

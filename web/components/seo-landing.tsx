@@ -1,11 +1,12 @@
 import Link from "next/link";
 
+import { DesktopDownloadLink } from "@/components/desktop-download-link";
 import { FaqJsonLd } from "@/components/faq-json-ld";
 import { SiteFooter } from "@/components/site-footer";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { LandingPage } from "@/lib/site";
-import { DESKTOP_RELEASE_URL, GITHUB_URL, relatedLandings, SITE_URL } from "@/lib/site";
+import { GITHUB_URL, relatedLandings, SITE_URL } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 interface SeoLandingProps {
@@ -43,14 +44,9 @@ export function SeoLanding({ page }: SeoLandingProps) {
               Open the converter
             </Link>
             {page.slug === "twbx-to-excel" ? (
-              <a
-                href={DESKTOP_RELEASE_URL}
-                target="_blank"
-                rel="noreferrer"
-                className={cn(buttonVariants({ size: "lg" }))}
-              >
+              <DesktopDownloadLink newTab className={cn(buttonVariants({ size: "lg" }))}>
                 Download Windows installer (.exe)
-              </a>
+              </DesktopDownloadLink>
             ) : null}
             <a
               href={GITHUB_URL}
@@ -110,27 +106,17 @@ export function SeoLanding({ page }: SeoLandingProps) {
           {page.slug === "twbx-to-excel" ? (
             <>
               For Hyper extracts, download{" "}
-              <a
-                href={DESKTOP_RELEASE_URL}
-                className="underline underline-offset-4"
-                target="_blank"
-                rel="noreferrer"
-              >
+              <DesktopDownloadLink className="underline underline-offset-4">
                 BIEscape Converter
-              </a>{" "}
+              </DesktopDownloadLink>{" "}
               (unsigned Windows installer). Browser conversion stays CSV/XLSX-only.
             </>
           ) : (
             <>
               Hyper → Excel uses the{" "}
-              <a
-                href={DESKTOP_RELEASE_URL}
-                className="underline underline-offset-4"
-                target="_blank"
-                rel="noreferrer"
-              >
+              <DesktopDownloadLink className="underline underline-offset-4">
                 desktop converter
-              </a>
+              </DesktopDownloadLink>
               . Clone the repo at{" "}
               <a href={GITHUB_URL} className="underline underline-offset-4" target="_blank" rel="noreferrer">
                 {GITHUB_URL}

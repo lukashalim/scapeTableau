@@ -34,7 +34,8 @@ import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkbookSession, type SqlDialect } from "@/components/workbook-session";
-import { DESKTOP_RELEASE_URL, DESKTOP_RELEASES_PAGE } from "@/lib/site";
+import { DesktopDownloadLink, DESKTOP_INSTALL_WARNING } from "@/components/desktop-download-link";
+import { DESKTOP_RELEASES_PAGE } from "@/lib/site";
 import type {
   CalculatedField,
   ColumnField,
@@ -198,16 +199,12 @@ function ExtractPanel({
               Hyper extracts need the Tableau Hyper engine and can&apos;t be converted in the browser.
             </p>
             <p>Download the free Windows installer to turn this into Excel on your computer.</p>
-            <a
-              href={DESKTOP_RELEASE_URL}
-              className={cn(buttonVariants({ variant: "default" }), "inline-flex")}
-            >
+            <DesktopDownloadLink className={cn(buttonVariants({ variant: "default" }), "inline-flex")}>
               <Download data-icon="inline-start" />
               Download Windows installer (.exe)
-            </a>
+            </DesktopDownloadLink>
             <p className="text-xs text-muted-foreground">
-              Direct .exe download (~300MB with hyperd). Unsigned — SmartScreen may warn (More info → Run anyway).
-              Release notes:{" "}
+              Direct .exe download (~300MB with hyperd). {DESKTOP_INSTALL_WARNING} Release notes:{" "}
               <a
                 href={DESKTOP_RELEASES_PAGE}
                 target="_blank"
@@ -686,13 +683,11 @@ export function WorkbookConverter({ embedded = false, view = "upload" }: Workboo
               <Sparkles data-icon="inline-start" />
               Try with Sample Workbook
             </button>
-            <a
-              href={DESKTOP_RELEASE_URL}
-              className={cn(buttonVariants({ variant: "outline" }), "inline-flex")}
-            >
+            <DesktopDownloadLink className={cn(buttonVariants({ variant: "outline" }), "inline-flex")}>
               <Download data-icon="inline-start" />
               Need Hyper → Excel? Download the Windows desktop app (.exe)
-            </a>
+            </DesktopDownloadLink>
+            <p className="basis-full text-xs text-muted-foreground">{DESKTOP_INSTALL_WARNING}</p>
             {fileName ? (
               <p className="text-sm text-muted-foreground">
                 Last file: <span className="text-foreground">{fileName}</span>

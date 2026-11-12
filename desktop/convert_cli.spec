@@ -21,6 +21,7 @@ hiddenimports = [
     "engine.sqlglot_util",
 ]
 hiddenimports += collect_submodules("engine.pbip")
+try:
     tmp_ret = collect_all("tableauhyperapi")
     datas += tmp_ret[0]
     binaries += tmp_ret[1]

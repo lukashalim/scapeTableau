@@ -14,7 +14,7 @@ function fileName(path: string | null): string | null {
 
 export default function App() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("extract");
+  const [tab, setTab] = useState<Tab>("pbip");
   const [status, setStatus] = useState<ConvertStatus>({ phase: "idle" });
   const [dialect, setDialect] = useState<SqlDialect>("ansi");
   const [sqlScript, setSqlScript] = useState("");

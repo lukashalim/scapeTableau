@@ -1,7 +1,7 @@
 {
   "name": "biescape-converter",
-  "version": "0.4.0",
-  "description": "BIEscape Converter — local Hyper/TWBX/TDSX to Excel",
+  "version": "0.5.0",
+  "description": "BIEscape Converter — local Tableau workbooks to Power BI projects, plus Hyper/TWBX to Excel",
   "author": "BIEscape",
   "license": "MIT",
   "private": true,

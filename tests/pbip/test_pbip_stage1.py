@@ -492,6 +492,7 @@ def test_custom_sql_object_count_becomes_filled_map_and_bars(tmp_path: Path) -> 
   <panes><pane><mark class='Automatic'/><encodings>
     <lod column='[federated.m].[none:state:nk]'/>
     <color column='[federated.m].[__tableau_internal_object_id__].[cnt:_ABCDEF:qk]'/>
+    <encoding attr='color' palette='tableau-map-blue-green' type='interpolated'/>
     <geometry column='[federated.m].[Geometry (generated)]'/>
   </encodings></pane></panes>
   <rows>[federated.m].[Latitude (generated)]</rows>
@@ -568,6 +569,11 @@ def test_custom_sql_object_count_becomes_filled_map_and_bars(tmp_path: Path) -> 
     color = filled["visual"]["query"]["queryState"]["Gradient"]["projections"][0]
     assert color["field"]["Measure"]["Property"] == "Count of Custom SQL Query"
     assert "Y" not in filled["visual"]["query"]["queryState"]
+    fill = filled["visual"]["objects"]["dataPoint"][0]
+    assert "metadata" not in fill["selector"]
+    assert fill["selector"]["data"][0]["dataViewWildcard"]["matchingOption"] == 0
+    stops = json.dumps(fill)
+    assert "'#F4F6C8'" in stops and "'#2E9B96'" in stops
     bars = next(v for v in visuals if v["visual"]["visualType"] == "clusteredBarChart")
     bar_cat = bars["visual"]["query"]["queryState"]["Category"]["projections"][0]
     assert bar_cat["field"]["Column"]["Property"] == "industry"

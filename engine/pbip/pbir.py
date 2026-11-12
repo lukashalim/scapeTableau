@@ -927,9 +927,9 @@ def _luminance(color: str) -> float:
 def _apply_map_gradient(objects: dict, body: dict) -> None:
     """Tableau's map blue-green: pale yellow for low counts, teal for high.
 
-    The selector ties the fill to the Gradient projection. A fill rule whose
-    measure is not one of that visual's projections is rejected with
-    AggregateSelectNotInProjectionReferencedIndices.
+    Chart fill rules take a data-point wildcard and no metadata. A metadata
+    selector is for tables; on a shape map it matches nothing, so every state
+    stays the default blue.
     """
 
     projections = (
@@ -945,10 +945,7 @@ def _apply_map_gradient(objects: dict, body: dict) -> None:
                     "solid": {"color": {"expr": _gradient(target["field"], "#2E9B96", low="#F4F6C8")}}
                 }
             },
-            "selector": {
-                "data": [{"dataViewWildcard": {"matchingOption": 1}}],
-                "metadata": target["queryRef"],
-            },
+            "selector": {"data": [{"dataViewWildcard": {"matchingOption": 0}}]},
         }
     ]
 

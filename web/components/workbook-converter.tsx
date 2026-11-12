@@ -437,7 +437,7 @@ export function WorkbookConverter({ embedded = false, view = "upload" }: Workboo
   const [pbipStatuses, setPbipStatuses] = useState<WorksheetConversion[] | null>(null);
   const [pbipError, setPbipError] = useState<string | null>(null);
   const [pbipLoading, setPbipLoading] = useState(false);
-  const [section, setSection] = useState("transpile");
+  const [section, setSection] = useState("powerbi");
   const pbipCacheKey = useRef<string | null>(null);
 
   const filtered = useMemo(() => {
